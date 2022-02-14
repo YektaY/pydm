@@ -81,6 +81,10 @@ class PYDMLayout(QLayout):
         else:
             return None
 
+    '''
+    def sizeHint(self) -> QSize:
+    '''
+
     def minimumSize(self) -> QSize:
         """
 
@@ -92,8 +96,17 @@ class PYDMLayout(QLayout):
         for item in self.itemList:
             size = size.expandedTo(item.minimumSize())
 
-        size += QSize(self.spacing(), self.spacing())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
         return size
+
+    '''
+    def __del__(self):
+        # copied for consistency, not sure this is needed or ever called
+        item = self.takeAt(0)
+        while item:
+            item = self.takeAt(0)
+    '''
 
     def horizontalSpacing(self) -> int:
         if self.m_hSpace >= 0:
@@ -141,11 +154,10 @@ class PYDMLayout(QLayout):
 
         """
 
-        print(rect.width(), rect.height())
-
+        #print(rect.width(), rect.height())
+        height = 0
         effective_rect = self.contentsRect()
         screen_ratio = effective_rect.width()/effective_rect.height()
-        height = 0
 
         for item in self.itemList:
             child_widget = item.widget()
