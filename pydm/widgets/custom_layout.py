@@ -1,5 +1,5 @@
-from qtpy.QtWidgets import QWidget, QLayout, QLayoutItem, QSizePolicy
-from qtpy.QtCore import Qt, QRect, QSize, QPoint
+from qtpy.QtWidgets import QWidget, QLayout, QLayoutItem
+from qtpy.QtCore import Qt, QRect, QSize
 from qtpy.QtGui import QFont
 import typing
 
@@ -18,11 +18,8 @@ class PYDMLayout(QLayout):
         super().__init__(parent)
 
         self._item_list = list()
-        self.setContentsMargins(margin, margin, margin, margin)
-        self.testRect = None
-        self.position_dict = {}
-        self.org = [640, 480]
         self._child_widget_dict = dict()
+        self.setContentsMargins(margin, margin, margin, margin)
 
     def addItem(self, item: QLayoutItem):
         """
@@ -32,7 +29,15 @@ class PYDMLayout(QLayout):
         """
 
         self._item_list.append(item)
-        widget = item.widget()
+        self.storeOriginalPosition(item.widget())
+
+    def storeOriginalPosition(self, widget):
+        """
+
+        Parameters
+        ----------
+        """
+
         self._child_widget_dict[widget] = (widget.x(), widget.y(), widget.width(), widget.height())
 
     def setGeometry(self, rect: QRect) -> None:
@@ -84,31 +89,15 @@ class PYDMLayout(QLayout):
         """
 
         size = QSize()
-
         for item in self._item_list:
             size = item.widget().geometry().size()
 
-            margins = self.contentsMargins()
-        #size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
-
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
         return size
 
     def count(self) -> int:
         return len(self._item_list)
-
-    '''
-    def heightForWidth(self, width: int) -> int:
-        height = self.maintainLayout()
-        return height
-    '''
-
-    @staticmethod
-    def expandingDirections() -> Qt.Orientations:
-        return Qt.Orientations(Qt.Orientation(0))
-
-    @staticmethod
-    def hasHeightForWidth() -> bool:
-        return True
 
     def maintainLayout(self, rect) -> int:
         """
@@ -117,16 +106,13 @@ class PYDMLayout(QLayout):
         """
 
         reference_width = 640
-        referance_height = 480
+        reference_height = 480
 
         height = 0
         effective_rect = rect
 
-        if effective_rect.height() - self.org[1] == 0:
-            return height
-
         scale_factor_w = effective_rect.width() / reference_width
-        scale_factor_h = effective_rect.height() / referance_height
+        scale_factor_h = effective_rect.height() / reference_height
 
         if scale_factor_w > scale_factor_h:
             scale_factor = scale_factor_w
@@ -154,12 +140,7 @@ class PYDMLayout(QLayout):
             item.setGeometry(scaled_item)
 
             if hasattr(child_widget, 'text'):
-                print(child_widget.font().pointSize())
+                # should get font form the stylesheet?
                 child_widget.setFont(QFont("Times New Roman", 13*scale_factor))
-                print(child_widget.font().pointSize())
-
-
-        self.org[0] = effective_rect.width()
-        self.org[1] = effective_rect.height()
 
         return height
