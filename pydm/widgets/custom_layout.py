@@ -1,5 +1,6 @@
 from qtpy.QtWidgets import QWidget, QLayout, QLayoutItem, QSizePolicy
 from qtpy.QtCore import Qt, QRect, QSize, QPoint
+from qtpy.QtGui import QFont
 import typing
 
 
@@ -21,6 +22,7 @@ class PYDMLayout(QLayout):
         self.testRect = None
         self.position_dict = {}
         self.org = [640, 480]
+        self._child_widget_dict = dict()
 
     def addItem(self, item: QLayoutItem):
         """
@@ -28,7 +30,10 @@ class PYDMLayout(QLayout):
         Parameters
         ----------
         """
+
         self._item_list.append(item)
+        widget = item.widget()
+        self._child_widget_dict[widget] = (widget.x(), widget.y(), widget.width(), widget.height())
 
     def setGeometry(self, rect: QRect) -> None:
         """
@@ -111,13 +116,22 @@ class PYDMLayout(QLayout):
         This layout designed for relative scaling.
         """
 
+        reference_width = 640
+        referance_height = 480
+
         height = 0
         effective_rect = rect
 
         if effective_rect.height() - self.org[1] == 0:
             return height
 
-        screen_ratio = effective_rect.width() / effective_rect.height()
+        scale_factor_w = effective_rect.width() / reference_width
+        scale_factor_h = effective_rect.height() / referance_height
+
+        if scale_factor_w > scale_factor_h:
+            scale_factor = scale_factor_w
+        else:
+            scale_factor = scale_factor_h
 
         for item in self._item_list:
             child_widget = item.widget()
@@ -125,26 +139,25 @@ class PYDMLayout(QLayout):
             if child_widget.width() == 0 or child_widget.height() == 0:
                 continue
 
-            child_ratio = child_widget.width() / child_widget.height()
+            child_widget_original_state = self._child_widget_dict[child_widget]
+            child_x = child_widget_original_state[0]
+            child_y = child_widget_original_state[1]
+            child_width = child_widget_original_state[2]
+            child_height = child_widget_original_state[3]
 
-
-            a = effective_rect.width()/self.org[0]
-            b = effective_rect.height()/self.org[1]
-
-            if a > b:
-                scale = a
-            else:
-                scale = b
-
-            print(scale)
-
-            width = child_widget.width() * scale
-            height = child_widget.height() * scale
-            x = round(child_widget.x() * width / child_widget.width())
-            y = round(child_widget.y() * height / child_widget.height())
+            width = child_width * scale_factor
+            height = child_height * scale_factor
+            x = child_x * scale_factor
+            y = child_y * scale_factor
 
             scaled_item = QRect(x, y, width, height)
             item.setGeometry(scaled_item)
+
+            if hasattr(child_widget, 'text'):
+                print(child_widget.font().pointSize())
+                child_widget.setFont(QFont("Times New Roman", 13*scale_factor))
+                print(child_widget.font().pointSize())
+
 
         self.org[0] = effective_rect.width()
         self.org[1] = effective_rect.height()

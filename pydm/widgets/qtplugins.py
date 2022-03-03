@@ -36,6 +36,7 @@ from .waveformplot import PyDMWaveformPlot
 from .scatterplot import PyDMScatterPlot
 from .template_repeater import PyDMTemplateRepeater
 from .terminator import PyDMTerminator
+from .custom_layout import PYDMLayout
 
 from ..utilities.iconfont import IconFont
 
@@ -244,3 +245,8 @@ PyDMTemplateRepeaterPlugin = qtplugin_factory(PyDMTemplateRepeater,
 PyDMTerminatorPlugin = qtplugin_factory(PyDMTerminator,
                                         group=WidgetCategory.MISC,
                                         extensions=BASE_EXTENSIONS)
+
+PYDMLayoutPlugin = qtplugin_factory(PYDMLayout,
+                                    group=WidgetCategory.MISC,
+                                    extensions=BASE_EXTENSIONS)
+
