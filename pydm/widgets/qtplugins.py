@@ -247,6 +247,5 @@ PyDMTerminatorPlugin = qtplugin_factory(PyDMTerminator,
                                         extensions=BASE_EXTENSIONS)
 
 PYDMLayoutPlugin = qtplugin_factory(PYDMLayout,
-                                    group=WidgetCategory.MISC,
-                                    extensions=BASE_EXTENSIONS)
+                                    group=WidgetCategory.MISC)
 

@@ -27,9 +27,17 @@ class PYDMLayout(QLayout):
         Parameters
         ----------
         """
-
         self._item_list.append(item)
         self.storeOriginalPosition(item.widget())
+
+    def addLayout(self, layout: QLayout):
+        """
+
+        Parameters
+        ----------
+        """
+        self._item_list.append(layout)
+        #pass
 
     def storeOriginalPosition(self, widget):
         """
@@ -48,7 +56,6 @@ class PYDMLayout(QLayout):
         """
 
         super(PYDMLayout, self).setGeometry(rect)
-        print(self._item_list[0].geometry().size())
         self.maintainLayout(rect)
 
     def sizeHint(self) -> QSize:
@@ -90,7 +97,10 @@ class PYDMLayout(QLayout):
 
         size = QSize()
         for item in self._item_list:
-            size = item.widget().geometry().size()
+            if hasattr(item, 'addItem'):
+                size = item.geometry().size()
+            else:
+                size = item.widget().geometry().size()
 
         margins = self.contentsMargins()
         size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
@@ -120,6 +130,22 @@ class PYDMLayout(QLayout):
             scale_factor = scale_factor_h
 
         for item in self._item_list:
+
+            if hasattr(item, 'addItem'):
+                #item.setGeometry(QRect(100,100,100,100))
+                child_rect = item.geometry()
+                print(child_rect.width())
+
+                child_rect.setX(child_rect.x()*scale_factor)
+                child_rect.setY(child_rect.y()*scale_factor)
+                child_rect.setWidth(child_rect.width()*scale_factor)
+                child_rect.setHeight(child_rect.height()*scale_factor)
+                item.setGeometry(child_rect)
+                print(child_rect.width())
+
+                item.update()
+                continue
+
             child_widget = item.widget()
 
             if child_widget.width() == 0 or child_widget.height() == 0:
