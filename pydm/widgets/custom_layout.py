@@ -28,16 +28,21 @@ class PYDMLayout(QLayout):
         ----------
         """
         self._item_list.append(item)
-        self.storeOriginalPosition(item.widget())
 
-    def addLayout(self, layout: QLayout):
+        if hasattr(item, 'widget'):
+            self.storeOriginalPosition(item.widget())
+
+    def addLayout(self, layout: QLayout, stretch: int = 0):
         """
 
         Parameters
         ----------
         """
-        self._item_list.append(layout)
-        #pass
+        for index in range(0, layout.count()):
+            item = layout.itemAt(index)
+            self.addItem(item)
+
+        #self._item_list.append(layout)
 
     def storeOriginalPosition(self, widget):
         """
@@ -45,7 +50,7 @@ class PYDMLayout(QLayout):
         Parameters
         ----------
         """
-
+        print(widget.x(), widget.y(), widget.width(), widget.height(), "ogp")
         self._child_widget_dict[widget] = (widget.x(), widget.y(), widget.width(), widget.height())
 
     def setGeometry(self, rect: QRect) -> None:
@@ -56,6 +61,7 @@ class PYDMLayout(QLayout):
         """
 
         super(PYDMLayout, self).setGeometry(rect)
+        print(self._item_list[-1].geometry(), "set")
         self.maintainLayout(rect)
 
     def sizeHint(self) -> QSize:
@@ -98,6 +104,7 @@ class PYDMLayout(QLayout):
         size = QSize()
         for item in self._item_list:
             if hasattr(item, 'addItem'):
+                print(item.geometry().size(), "size")
                 size = item.geometry().size()
             else:
                 size = item.widget().geometry().size()
@@ -130,20 +137,7 @@ class PYDMLayout(QLayout):
             scale_factor = scale_factor_h
 
         for item in self._item_list:
-
             if hasattr(item, 'addItem'):
-                #item.setGeometry(QRect(100,100,100,100))
-                child_rect = item.geometry()
-                print(child_rect.width())
-
-                child_rect.setX(child_rect.x()*scale_factor)
-                child_rect.setY(child_rect.y()*scale_factor)
-                child_rect.setWidth(child_rect.width()*scale_factor)
-                child_rect.setHeight(child_rect.height()*scale_factor)
-                item.setGeometry(child_rect)
-                print(child_rect.width())
-
-                item.update()
                 continue
 
             child_widget = item.widget()
@@ -163,7 +157,14 @@ class PYDMLayout(QLayout):
             y = child_y * scale_factor
 
             scaled_item = QRect(x, y, width, height)
-            item.setGeometry(scaled_item)
+
+            if True:
+                child_widget.resize(scaled_item.size())
+            else:
+                item.setGeometry(scaled_item)
+
+            #if hasattr(child_widget, 'updateGeomerty'):
+            #    child_widget.updateGeomerty()
 
             if hasattr(child_widget, 'text'):
                 # should get font form the stylesheet?
