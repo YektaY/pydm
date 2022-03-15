@@ -158,7 +158,7 @@ class PYDMLayout(QLayout):
 
             scaled_item = QRect(x, y, width, height)
 
-            if True:
+            if False:
                 child_widget.resize(scaled_item.size())
             else:
                 item.setGeometry(scaled_item)
