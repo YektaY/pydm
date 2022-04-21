@@ -37,6 +37,7 @@ from .scatterplot import PyDMScatterPlot
 from .template_repeater import PyDMTemplateRepeater
 from .terminator import PyDMTerminator
 from .custom_layout import PYDMLayout
+from .custom_layout_widget import PYDMProxyWidget
 
 from ..utilities.iconfont import IconFont
 
@@ -249,3 +250,4 @@ PyDMTerminatorPlugin = qtplugin_factory(PyDMTerminator,
 PYDMLayoutPlugin = qtplugin_factory(PYDMLayout,
                                     group=WidgetCategory.MISC)
 
+PYDMProxyWidgetPlugin = qtplugin_factory(PYDMProxyWidget, group=WidgetCategory.LAYOUT, is_container=True)

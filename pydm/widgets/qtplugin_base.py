@@ -31,6 +31,7 @@ class WidgetCategory(object):
     INPUT = "PyDM Input Widgets"
     PLOT = "PyDM Plot Widgets"
     DRAWING = "PyDM Drawing Widgets"
+    LAYOUT = "PyDM Layout Widgets"
     MISC = "PyDM Misc. Widgets"
 
 

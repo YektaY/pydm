@@ -14,7 +14,7 @@ class PYDMLayout(QLayout):
         The parent layout
     """
 
-    def __init__(self, parent: QWidget = None, margin: int = -1):
+    def __init__(self, parent: QLayout = None, margin: int = -1):
         super().__init__(parent)
 
         self._item_list = list()
@@ -32,21 +32,32 @@ class PYDMLayout(QLayout):
         if hasattr(item, 'widget'):
             self.storeOriginalPosition(item.widget())
 
+    # def insertLayout(self, index: int, layout: QLayout, stretch: int):
+    #     item = QLayoutItem(layout)
+    #     print(item)
+    #     self._item_list.append(item)
+
     def addLayout(self, layout: QLayout, stretch: int = 0):
         """
 
         Parameters
         ----------
         """
-        for index in range(0, layout.count()):
-            item = layout.itemAt(index)
-            self.addItem(item)
+
+        # self.insertLayout(-1, layout, stretch)
+        #widget = QWidget()
+        #layout.addWidget(widget)
+        #self.addItem(widget)
+        pass
+
+        #for index in range(0, layout.count()):
+            #item = layout.itemAt(index)
+            #pass
 
         #self._item_list.append(layout)
 
     def storeOriginalPosition(self, widget):
         """
-
         Parameters
         ----------
         """
@@ -61,7 +72,7 @@ class PYDMLayout(QLayout):
         """
 
         super(PYDMLayout, self).setGeometry(rect)
-        print(self._item_list[-1].geometry(), "set")
+        # print(self._item_list[-1].geometry(), "set")
         self.maintainLayout(rect)
 
     def sizeHint(self) -> QSize:
@@ -138,9 +149,18 @@ class PYDMLayout(QLayout):
 
         for item in self._item_list:
             if hasattr(item, 'addItem'):
+                item.addStretch(scale_factor)
+                #print(item.geometry.size())
                 continue
 
             child_widget = item.widget()
+
+            '''
+            if hasattr(item, 'widget'):
+                child_widget = item.widget()
+            else:
+                child_widget = item
+            '''
 
             if child_widget.width() == 0 or child_widget.height() == 0:
                 continue
@@ -159,7 +179,9 @@ class PYDMLayout(QLayout):
             scaled_item = QRect(x, y, width, height)
 
             if False:
-                child_widget.resize(scaled_item.size())
+                #print("hmm")
+                #child_widget.resize(scaled_item.size())
+                item.setGeometry(scaled_item)
             else:
                 item.setGeometry(scaled_item)
 

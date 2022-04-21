@@ -26,3 +26,4 @@ from .scatterplot import PyDMScatterPlot
 from .tab_bar import PyDMTabWidget
 from .template_repeater import PyDMTemplateRepeater
 from .custom_layout import PYDMLayout
+from .custom_layout_widget import PYDMProxyWidget
