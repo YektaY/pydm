@@ -1,9 +1,12 @@
 import os
 import json
 import inspect
+import psutil
+import subprocess
 from qtpy.QtWidgets import QWidget, QMenu, QAction, QMainWindow, QFileDialog
 from qtpy.QtGui import QIcon
 from .main_window import PyDMMainWindow
+
 
 class Session(QMainWindow):
     """
@@ -30,21 +33,21 @@ class Session(QMainWindow):
         for element in range(len(self.tool_bar_actions)):
             self.button.append(element)
             self.button[element] = QAction(self.tool_bar_actions[element], self)
-            #self.button[element].setStatusTip("This is your button")
+            # self.button[element].setStatusTip("This is your button")
             self.button[element].triggered.connect(self.tool_bar_methods[element])
 
         # Flag to check if 'File' already exists in the menu bar.
         exist = False
 
         for name in parent.menuBar().actions():
-            if name.text() == "File": # should be &File
+            if name.text() == "File":  # Should be &File
                 exist = True
                 break
 
         if not exist:
             self.file_menu = QMenu("&File", self)
         else:
-            self.file_menu = parent.menuBar().actions("&File") #error here
+            self.file_menu = parent.menuBar().actions("&File")  # error here
 
         for menu_element in self.button:
             self.file_menu.addAction(menu_element)
@@ -57,7 +60,6 @@ class Session(QMainWindow):
 
         Parameters
         ----------
-        ui_file : filename
         """
         print("load")
 
@@ -68,7 +70,6 @@ class Session(QMainWindow):
 
         if filename is None:
             return
-
 
         with open(filename[0]) as file:
             json_data = json.load(file)
@@ -83,7 +84,7 @@ class Session(QMainWindow):
 
             self.make_main_window(stylesheet_path=stylesheet_path)
             # self.main_window.move()
-            self.main_window.open(self.ui_file, macros, command_line_args)
+            self.main_window.open(ui_file, macros, command_line_args)
 
     def save(self):
         """
@@ -92,5 +93,34 @@ class Session(QMainWindow):
         ----------
 
         """
+
+        proc = subprocess.Popen(['ps', 'aux'], stdout=subprocess.PIPE).stdout.readlines()
+        print(type(proc[0]), proc[0])
+        res = [i for i in proc if 'pydm' in i]
+        print(res)
+        # Get Generator object containing all running processes
+        process_iterator = psutil.process_iter()
+
+        # Iterate over Generator object to get
+        # each process object contained by it
+        '''
+        for proc in psutil.process_iter(['pid', 'name', 'username']):
+           print(proc.info)
+        '''
+
+        save_data_dict = {}
+        filename = None
+
+        try:
+            filename, _ = QFileDialog.getSaveFileName(self, "Save PyQT Session", "", "JSON (*.json)")
+        except valueError:
+            return  # need error here?
+
+        print(filename)
+        if filename is None or filename == "":
+            return  # need error here?
+
+        with open(filename, "w") as file:
+            json.dump(save_data_dict, file)
+
         print("save")
-        pass

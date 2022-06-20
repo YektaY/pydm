@@ -1,7 +1,7 @@
 import os
 from os import path
 from qtpy.QtWidgets import (QApplication, QMainWindow, QFileDialog,
-                            QWidget, QAction, QMessageBox)
+                            QWidget, QAction, QMessageBox, QMenu, QMenuBar)
 from qtpy.QtCore import Qt, QTimer, Slot, QSize, QLibraryInfo
 from .utilities import (IconFont, find_file, establish_widget_connections,
                         close_widget_connections)
@@ -16,6 +16,9 @@ from . import config
 import subprocess
 import platform
 import logging
+import inspect
+
+from PyQt5 import QtWidgets, QtCore
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,23 @@ class PyDMMainWindow(QMainWindow):
 
         self.update_tools_menu()
         self.enable_disable_navigation()
+
+        self.settings = QtCore.QSettings()
+        print(self.settings.fileName())
+        self.restore(self.settings)
+
+        self.menu_bar = QMenuBar(self)
+        self.setMenuBar(self.menu_bar)
+        self.file_menu = QMenu("&File", self)
+        self.menu_bar.addMenu(self.file_menu)
+
+        QtCore.QCoreApplication.setOrganizationName("Eyllanesc")
+        QtCore.QCoreApplication.setOrganizationDomain("eyllanesc.com")
+        QtCore.QCoreApplication.setApplicationName("MyApp")
+        print("new apps")
+
+        print(inspect.getmembers(self), "cool")
+
 
     def display_widget(self):
         return self._display_widget
@@ -478,3 +498,38 @@ class PyDMMainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No)
             if quit_message == QMessageBox.Yes:
                 callback()
+
+    #From the internet
+    def restore(self, settings):
+        finfo = QtCore.QFileInfo(settings.fileName())
+        if finfo.exists() and finfo.isFile():
+            for w in QtWidgets.qApp.allWidgets():
+                mo = w.metaObject()
+                if w.objectName() and not w.objectName().startswith("qt_"):
+                    settings.beginGroup(w.objectName())
+                    for i in range( mo.propertyCount(), mo.propertyOffset()-1, -1):
+                        prop = mo.property(i)
+                        if prop.isWritable():
+                            name = prop.name()
+                            val = settings.value(name, w.property(name))
+                            if str(val).isdigit():
+                                val = int(val)
+                            w.setProperty(name, val)
+                    settings.endGroup()
+
+    def save(self, settings):
+        for w in QtWidgets.qApp.allWidgets():
+            mo = w.metaObject()
+            if w.objectName() and not w.objectName().startswith("qt_"):
+                settings.beginGroup(w.objectName())
+                for i in range(mo.propertyCount()):
+                    prop = mo.property(i)
+                    name = prop.name()
+                    if prop.isWritable():
+                        settings.setValue(name, w.property(name))
+                settings.endGroup()
+
+    def closeEvent(self, event):
+        self.save(self.settings)
+        super().closeEvent(event)
+        print('house')

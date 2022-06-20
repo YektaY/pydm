@@ -14,7 +14,7 @@ import warnings
 from qtpy.QtCore import Qt, QTimer, Slot
 from qtpy.QtWidgets import QApplication, QWidget
 from .main_window import PyDMMainWindow
-
+from .sessions import Session
 from .display import load_file
 from .utilities import macro, which, path_info, find_display_in_path
 from .utilities.stylesheet import apply_stylesheet
@@ -92,6 +92,9 @@ class PyDMApplication(QApplication):
 
         # Open a window if required.
         if ui_file is not None:
+            #if ui_file[-3:].lower() == "json": #probably want something different here checkout https://github.com/ahupp/python-magic
+            #    self.load(ui_file)
+            #else:
             self.make_main_window(stylesheet_path=stylesheet_path)
             self.main_window.open(ui_file, macros, command_line_args)
         elif use_main_window:
@@ -110,7 +113,11 @@ class PyDMApplication(QApplication):
             self.perf_timer.timeout.connect(self.get_CPU_usage)
             self.perf_timer.start()
 
-    def get_string_encoding(self):
+        print(stylesheet_path, "testing")
+        Session(self.main_window)
+
+    @staticmethod
+    def get_string_encoding():
         return os.getenv("PYDM_STRING_ENCODING", "utf_8")
 
     def exec_(self):
