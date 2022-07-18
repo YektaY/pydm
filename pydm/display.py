@@ -12,6 +12,8 @@ from string import Template
 
 from qtpy import uic
 from qtpy.QtWidgets import QWidget, QApplication
+from qtpy.QtGui import QPainter
+from qtpy.QtCore import Signal
 
 from .utilities import macro, is_pydm_app
 from .utilities.stylesheet import merge_widget_stylesheet
@@ -243,6 +245,8 @@ _extension_to_loader = {
 
 
 class Display(QWidget):
+    #resized = Signal()
+
     def __init__(self, parent=None, args=None, macros=None, ui_filename=None):
         super(Display, self).__init__(parent=parent)
         self.ui = None
@@ -255,8 +259,34 @@ class Display(QWidget):
         if ui_filename or self.ui_filename():
             self.load_ui(macros=macros)
 
+        print("hmmm")
+        #self.current_size = self.grab()
+
     def loaded_file(self):
         return self._loaded_file
+
+    def test(self):
+        print("Cute")
+        #ob = pix_map.scaled(5, 5).rect()
+        #self.repaint()
+
+    #def paintEvent(self, event):
+    #    sizing = self.grab()
+    #    self.painter = QPainter()
+    #    self.painter.begin(self)
+    #    self.painter.scale(sizing.rect().x(), sizing.rect().y())
+    #    self.painter.end()
+
+    #def resizeEvent(self, event):
+        #self.resized.emit()
+        #pix_map = self.grab()
+        #self.painter = QPainter()
+        #self.painter.begin(self)
+        #self.painter.scale(self.current_size.rect().x(), self.current_size.rect().y())
+        #self.painter.end()
+        #self.update()
+
+        #super().resizeEvent(event)
 
     @property
     def previous_display(self):
