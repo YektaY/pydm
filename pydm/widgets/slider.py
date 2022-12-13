@@ -7,7 +7,7 @@ from qtpy.QtWidgets import QFrame, QLabel, QSlider, QVBoxLayout, QHBoxLayout, QS
 from pydm.widgets import PyDMLabel
 from .base import PyDMWritableWidget, TextFormatter, is_channel_valid
 from .channel import PyDMChannel
-
+from ..utilities import is_qt_designer
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,8 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
 
         self._orig_wheel_event = self._slider.wheelEvent
         self._slider.wheelEvent = self.wheelEvent
+        self._orig_mousePressEvent = self._slider.mousePressEvent
+        self._slider.mousePressEvent = self.mousePressEvent
 
         self._slider.sliderMoved.connect(self.internal_slider_moved)
         self._slider.sliderPressed.connect(self.internal_slider_pressed)
@@ -109,6 +111,18 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         if mouse_event.button() == Qt.RightButton:
             position_of_click = mouse_event.pos()
             self.slider_parameters_menu(position_of_click)
+
+        '''
+        if mouse_event.button() == Qt.LeftButton:
+            print(mouse_event.pos().x(), self.step_size, self._slider.pos())
+
+            if mouse_event.pos().x() <= self._slider.sliderPosition():
+                self._slider.setSliderPosition(self._slider.pos().x() - self.step_size)
+            else:
+                self._slider.setSliderPosition(self._slider.pos().x() + self.step_size)
+
+            self._orig_mousePressEvent(mouse_event)
+        '''
 
     def slider_parameters_menu(self, position_of_click):
         """
@@ -199,6 +213,7 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         try:
             new_step_size = float(self.slider_parameters_menu_input_widgets[1].text())
             new_step_size_scaled = new_step_size*float(self.slider_parameters_menu_input_widgets[2].currentText())
+            print(new_step_size_scaled, new_step_size, float(self.slider_parameters_menu_input_widgets[2].currentText()))
             if new_step_size_scaled > 0:
                 self.step_size = new_step_size_scaled
 
@@ -209,9 +224,10 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
                 logger.error("step input is incorrect or 0")
         except ValueError:
             if is_channel_valid(self.slider_parameters_menu_input_widgets[1].text()):
-                address = self.slider_parameters_menu_input_widgets[1].text()
-                self.step_size_channel = PyDMChannel(address=address, value_slot=self.step_size_changed)
-                self.step_size_channel.connect()
+                if not is_qt_designer:
+                    address = self.slider_parameters_menu_input_widgets[1].text()
+                    self.step_size_channel = PyDMChannel(address=address, value_slot=self.step_size_changed)
+                    self.step_size_channel.connect()
             else:
                 logger.error("step input is incorrect")
 
@@ -811,13 +827,13 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         ----------
         new_steps : int
         """
-        self._num_steps = int(new_steps)
-        self.reset_slider_limits()
+        self.size_change(new_steps, False)
+
 
     @Property(int)
     def step_size(self):
         """
-        The number of steps on the slider
+        The size of the step between points on the slider.
 
         Returns
         -------
@@ -828,20 +844,29 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     @step_size.setter
     def step_size(self, new_step_size):
         """
-        The number of steps on the slider
+        The size of the step between points on the slider.
 
         Parameters
         ----------
         new_step_size : float
         """
-
-        if self.maximum is None or self.minimum is None or new_step_size <= 0:
+        if new_step_size <= 0:
             return False
 
-        self._step_size = float(new_step_size)
-        self._parameters_menu_flag = True
-        self.num_steps = ((self.maximum - self.minimum) / self._step_size + 1) + 1
-        return True
+        self.size_change(new_step_size, True)
+
+    def size_change(self, size, is_step):
+        if self.maximum is None or self.minimum is None:
+            return False
+
+        if is_step:
+            self._step_size = float(size)
+            self._parameters_menu_flag = True
+            self.num_steps = ((self.maximum - self.minimum) / self._step_size + 1) + 1
+        else:
+            self._num_steps = int(size)
+            self.reset_slider_limits()
+            self._step_size = ((self.maximum - self.minimum) / self._num_steps - 1) - 1
 
     @Slot(int)
     @Slot(float)
