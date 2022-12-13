@@ -1,0 +1,7 @@
+codecov
+pytest>=3.6
+pytest-qt
+pytest-cov
+pytest-timeout
+p4p
+pyca
