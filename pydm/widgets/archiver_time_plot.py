@@ -293,6 +293,7 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                         max_x = self._starting_timestamp
                 requested_seconds = max_x - min_x
                 if requested_seconds <= 5:
+                    self._archive_request_queued = False
                     continue  # Avoids noisy requests when first rendering the plot
                 # Max amount of raw data to return before using optimized data
                 max_data_request = int(0.80 * self.getArchiveBufferSize())
@@ -327,6 +328,17 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         if value < DEFAULT_TIME_SPAN:  # Less than 5 seconds will break the plot
             return
         self._time_span = value
+
+    def clearCurves(self) -> None:
+        """ Clear all curves from the plot """
+        for curve in self._curves:
+            # Need to clear out any bars from optimized data, then super() can handle the rest
+            if not curve.error_bar_needs_set:
+                curve.getViewBox().removeItem(curve.error_bar_item)
+
+        # reset _min_x to let updateXAxis make requests anew
+        self._min_x = self._starting_timestamp 
+        super().clearCurves()
 
     def getCurves(self) -> List[str]:
         """
