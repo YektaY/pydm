@@ -3,14 +3,19 @@ import numpy as np
 from decimal import Decimal
 from qtpy.QtCore import Qt, Signal, Slot, Property
 from qtpy.QtWidgets import QFrame, QLabel, QSlider, QVBoxLayout, QHBoxLayout, QSizePolicy, \
-    QWidget, QLineEdit, QPushButton, QCheckBox, QComboBox
+    QWidget, QLineEdit, QPushButton, QCheckBox, QComboBox, QProxyStyle, QStyle
 from pydm.widgets import PyDMLabel
 from .base import PyDMWritableWidget, TextFormatter, is_channel_valid
 from .channel import PyDMChannel
-from ..utilities import is_qt_designer
+
 
 logger = logging.getLogger(__name__)
 
+class CustomSliderStyle(QProxyStyle):
+    def styleHint(self, hint, option = 0, widget = 0, returnData = 0):
+        if hint == QStyle.SH_Slider_PageSetButtons:
+            return Qt.LeftButton 
+        return QProxyStyle.styleHint(self, hint, option, widget, returnData)
 
 class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     """
@@ -63,12 +68,15 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         self.high_lim_label.setSizePolicy(label_size_policy)
         self.high_lim_label.setAlignment(Qt.AlignRight | Qt.AlignTrailing | Qt.AlignVCenter)
         self._slider = QSlider(parent=self)
+        style = CustomSliderStyle(self._slider.style())
+        self._slider.setStyle(style)
         self._slider.setOrientation(Qt.Horizontal)
 
         self._orig_wheel_event = self._slider.wheelEvent
         self._slider.wheelEvent = self.wheelEvent
-        self._orig_mousePressEvent = self._slider.mousePressEvent
-        self._slider.mousePressEvent = self.mousePressEvent
+
+        self._orig_pressed_event = self._slider.mousePressEvent
+        #self._slider.mousePressEvent = self.mousePressEvent
 
         self._slider.sliderMoved.connect(self.internal_slider_moved)
         self._slider.sliderPressed.connect(self.internal_slider_pressed)
@@ -89,6 +97,7 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         self._parameters_menu_flag = False
         self.step_max = self.maximum
         self.step_size_channel = None
+        self._step_click = False 
 
     def wheelEvent(self, e):
         """
@@ -103,7 +112,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def mousePressEvent(self, mouse_event):
         """
         Method to open slider parameters menu with a right click.
-
         Parameters
         ----------
         mouse_event : mousePressEvent
@@ -111,18 +119,31 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         if mouse_event.button() == Qt.RightButton:
             position_of_click = mouse_event.pos()
             self.slider_parameters_menu(position_of_click)
-
-        '''
+        
+        
         if mouse_event.button() == Qt.LeftButton:
-            print(mouse_event.pos().x(), self.step_size, self._slider.pos())
+            if self._step_click == False: 
+                return 
 
-            if mouse_event.pos().x() <= self._slider.sliderPosition():
-                self._slider.setSliderPosition(self._slider.pos().x() - self.step_size)
+            position_of_click = mouse_event.pos()
+
+            if self._orientation == Qt.Horizontal:   
+                position = self._slider.value() * (self._slider.width() + self._slider.minimum())/(self._slider.maximum() - self._slider.minimum())
+                if position_of_click.x() > position:
+                    move = self._slider.value() + self._step_size
+                else:
+                    move = self._slider.value() - self._step_size
             else:
-                self._slider.setSliderPosition(self._slider.pos().x() + self.step_size)
+                print(self._slider.value(),self._slider.height(),  self._slider.maximum(), self._slider.minimum())
+                position =  ((self._slider.value())* (self._slider.height() + self._slider.minimum())/(self._slider.maximum() - self._slider.minimum())) 
+                print(position, position_of_click.y(), self._slider.value(), "huh")
+                if position_of_click.y() > position:
+                    move = self._slider.value() + self._step_size
+                else:
+                    move = self._slider.value() - self._step_size
 
-            self._orig_mousePressEvent(mouse_event)
-        '''
+            self._slider.setSliderPosition(move)
+            return  
 
     def slider_parameters_menu(self, position_of_click):
         """
@@ -213,7 +234,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         try:
             new_step_size = float(self.slider_parameters_menu_input_widgets[1].text())
             new_step_size_scaled = new_step_size*float(self.slider_parameters_menu_input_widgets[2].currentText())
-            print(new_step_size_scaled, new_step_size, float(self.slider_parameters_menu_input_widgets[2].currentText()))
             if new_step_size_scaled > 0:
                 self.step_size = new_step_size_scaled
 
@@ -224,10 +244,9 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
                 logger.error("step input is incorrect or 0")
         except ValueError:
             if is_channel_valid(self.slider_parameters_menu_input_widgets[1].text()):
-                if not is_qt_designer:
-                    address = self.slider_parameters_menu_input_widgets[1].text()
-                    self.step_size_channel = PyDMChannel(address=address, value_slot=self.step_size_changed)
-                    self.step_size_channel.connect()
+                address = self.slider_parameters_menu_input_widgets[1].text()
+                self.step_size_channel = PyDMChannel(address=address, value_slot=self.step_size_changed)
+                self.step_size_channel.connect()
             else:
                 logger.error("step input is incorrect")
 
@@ -270,7 +289,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def orientation(self):
         """
         The slider orientation (Horizontal or Vertical)
-
         Returns
         -------
         int
@@ -282,7 +300,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def orientation(self, new_orientation):
         """
         The slider orientation (Horizontal or Vertical)
-
         Parameters
         ----------
         new_orientation : int
@@ -294,7 +311,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def setup_widgets_for_orientation(self, new_orientation):
         """
         Reconstruct the widget given the orientation.
-
         Parameters
         ----------
         new_orientation : int
@@ -392,7 +408,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def float_range(self):
         """
         Creates a range of numbers from the min, max and given step size.
-
         Returns
         -------
         new_indexes : list of floats
@@ -407,11 +422,9 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         Find and returns the index for the closest position on the slider
         for a given value.
-
         Parameters
         ----------
         val : float
-
         Returns
         -------
         int
@@ -423,7 +436,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def set_slider_to_closest_value(self, val):
         """
         Set the value for the slider according to a given value.
-
         Parameters
         ----------
         val : float
@@ -449,7 +461,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         Callback invoked when the connection state of the Channel is changed.
         This callback acts on the connection state to enable/disable the widget
         and also trigger the change on alarm severity to ALARM_DISCONNECTED.
-
         Parameters
         ----------
         connected : int
@@ -463,7 +474,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         Callback invoked when the Channel has new write access value.
         This callback calls check_enable_state so it can act on the widget
         enabling or disabling it accordingly
-
         Parameters
         ----------
         new_write_access : bool
@@ -475,7 +485,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def value_changed(self, new_val):
         """
         Callback invoked when the Channel value is changed.
-
         Parameters
         ----------
         new_val : int or float
@@ -493,7 +502,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         Callback invoked when the Channel receives new control limit
         values.
-
         Parameters
         ----------
         which : str
@@ -510,7 +518,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         Reconstruct the format string to be used when representing the
         output value.
-
         Returns
         -------
         format_string : str
@@ -541,7 +548,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def internal_slider_moved(self, val):
         """
         Method invoked when the slider is moved.
-
         Parameters
         ----------
         val : float
@@ -568,7 +574,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         Method invoked when a new value is selected on the slider.
         This will cause the new value to be emitted to the signal
         unless `mute_internal_slider_changes` is True.
-
         Parameters
         ----------
         val : int
@@ -636,7 +641,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def showLimitLabels(self):
         """
         Whether or not the high and low limits should be displayed on the slider.
-
         Returns
         -------
         bool
@@ -647,7 +651,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def showLimitLabels(self, checked):
         """
         Whether or not the high and low limits should be displayed on the slider.
-
         Parameters
         ----------
         checked : bool
@@ -664,7 +667,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def showValueLabel(self):
         """
         Whether or not the current value should be displayed on the slider.
-
         Returns
         -------
         bool
@@ -675,7 +677,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def showValueLabel(self, checked):
         """
         Whether or not the current value should be displayed on the slider.
-
         Parameters
         ----------
         checked : bool
@@ -690,7 +691,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def tickPosition(self):
         """
         Where to draw tick marks for the slider.
-
         Returns
         -------
         QSlider.TickPosition
@@ -701,7 +701,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def tickPosition(self, position):
         """
         Where to draw tick marks for the slider.
-
         Parameter
         ---------
         position : QSlider.TickPosition
@@ -713,7 +712,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         Wether or not to use limits defined by the user and not from the
         channel
-
         Returns
         -------
         bool
@@ -725,7 +723,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         Wether or not to use limits defined by the user and not from the
         channel
-
         Parameters
         ----------
         user_defined_limits : bool
@@ -737,7 +734,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def userMinimum(self):
         """
         Lower user defined limit value
-
         Returns
         -------
         float
@@ -748,7 +744,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def userMinimum(self, new_min):
         """
         Lower user defined limit value
-
         Parameters
         ----------
         new_min : float
@@ -761,7 +756,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def userMaximum(self):
         """
         Upper user defined limit value
-
         Returns
         -------
         float
@@ -772,7 +766,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def userMaximum(self, new_max):
         """
         Upper user defined limit value
-
         Parameters
         ----------
         new_max : float
@@ -785,7 +778,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def minimum(self):
         """
         The current value being used for the lower limit
-
         Returns
         -------
         float
@@ -798,7 +790,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def maximum(self):
         """
         The current value being used for the upper limit
-
         Returns
         -------
         float
@@ -811,7 +802,6 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def num_steps(self):
         """
         The number of steps on the slider
-
         Returns
         -------
         int
@@ -822,19 +812,17 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     def num_steps(self, new_steps):
         """
         The number of steps on the slider
-
         Parameters
         ----------
         new_steps : int
         """
-        self.size_change(new_steps, False)
-
+        self._num_steps = int(new_steps)
+        self.reset_slider_limits()
 
     @Property(int)
     def step_size(self):
         """
-        The size of the step between points on the slider.
-
+        The number of steps on the slider
         Returns
         -------
         int
@@ -844,29 +832,19 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
     @step_size.setter
     def step_size(self, new_step_size):
         """
-        The size of the step between points on the slider.
-
+        The number of steps on the slider
         Parameters
         ----------
         new_step_size : float
         """
-        if new_step_size <= 0:
+
+        if self.maximum is None or self.minimum is None or new_step_size <= 0:
             return False
 
-        self.size_change(new_step_size, True)
-
-    def size_change(self, size, is_step):
-        if self.maximum is None or self.minimum is None:
-            return False
-
-        if is_step:
-            self._step_size = float(size)
-            self._parameters_menu_flag = True
-            self.num_steps = ((self.maximum - self.minimum) / self._step_size + 1) + 1
-        else:
-            self._num_steps = int(size)
-            self.reset_slider_limits()
-            self._step_size = ((self.maximum - self.minimum) / self._num_steps - 1) - 1
+        self._step_size = float(new_step_size)
+        self._parameters_menu_flag = True
+        self.num_steps = ((self.maximum - self.minimum) / self._step_size + 1) + 1
+        return True
 
     @Slot(int)
     @Slot(float)
@@ -874,10 +852,35 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         """
         PyQT Slot for changes on the Value of the Channel
         This slot sends the value to the step_size setter.
-
         Parameters
         ----------
         new_val : int, float
         """
         if new_val > 0:
             self.step_size = new_val
+    
+    @Property(bool)
+    def step_click(self):
+        """
+        PyQT Slot for changes on the Value of the Channel
+        This slot sends the value to the step_size setter.
+        """
+        return self._step_click
+
+    @step_click.setter
+    def step_click(self, change_click):
+        """
+        PyQT Slot for changes on the Value of the Channel
+        This slot sends the value to the step_size setter.
+
+        Parameters
+        ----------
+        change_click : int, float
+        """
+        if self._step_click != change_click:
+            self._step_click = change_click
+            if self._step_click:
+                self._slider.mousePressEvent = self.mousePressEvent
+            else:
+                self._slider.mousePressEvent = self._orig_pressed_event
+
