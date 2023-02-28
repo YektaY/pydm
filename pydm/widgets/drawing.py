@@ -5,8 +5,8 @@ import logging
 
 from qtpy.QtWidgets import (QWidget, QStyle, QStyleOption)
 from qtpy.QtGui import (QColor, QPainter, QBrush, QPen, QPolygon, QPolygonF, QPixmap,
-                            QMovie)
-from qtpy.QtCore import Property, Qt, QPoint, QPointF, QSize, Slot, QTimer, QRectF
+                            QMovie, QMouseEvent)
+from qtpy.QtCore import Property, Qt, QPoint, QPointF, QSize, Slot, QTimer, QRectF, QEvent
 from qtpy.QtDesigner import QDesignerFormWindowInterface
 from .base import PyDMWidget
 from ..utilities import is_qt_designer, find_file
@@ -1237,6 +1237,24 @@ class PyDMDrawingPolyline(PyDMDrawing):
 
     points = Property("QStringList", getPoints, setPoints, resetPoints)
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        print("train-2")
+        if is_qt_designer and event.button() == Qt.RightButton:
+            print("train")
+            
+    def eventFilter(self, obj, event):
+        """
+        EventFilter to redirect "middle click" to :meth:`.show_address_tooltip`
+        """
+
+        print("train 3")
+        # Override the eventFilter to capture all middle mouse button events,
+        # and show a tooltip if needed.
+        if event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.MiddleButton:
+                self.show_address_tooltip(event)
+                return True
+        return False
 
 class PyDMDrawingIrregularPolygon(PyDMDrawingPolyline):
     """
