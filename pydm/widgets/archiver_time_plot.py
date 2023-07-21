@@ -31,6 +31,8 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     use_archive_data : bool
         If True, requests will be made to archiver appliance for archived data when
         the plot is zoomed or scrolled to the left.
+    no_live_data : bool 
+        only fetch data from the archiver appliance for archived data. 
     **kws : dict[str: any]
         Additional parameters supported by pyqtgraph.PlotDataItem.
     """
@@ -39,9 +41,11 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     archive_data_request_signal = Signal(float, float, str)
     archive_data_received_signal = Signal()
 
-    def __init__(self, channel_address: Optional[str] = None, use_archive_data: bool = True, **kws):
-        super(ArchivePlotCurveItem, self).__init__(channel_address, **kws)
+    def __init__(self, channel_address: Optional[str] = None, use_archive_data: bool = True, no_live_data: bool = False, **kws):
+        super().__init__(channel_address, no_live_data, **kws)
+        print(no_live_data, "hmhmhm")
         self.use_archive_data = use_archive_data
+        self.no_live_data = no_live_data
         self.archive_channel = None
         self.archive_points_accumulated = 0
         self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
@@ -62,6 +66,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
                 ("useArchiveData", self.use_archive_data),
             ]
         )
+        dic_ = OrderedDict([("noLiveData", self.no_live_data), ])
         dic_.update(super(ArchivePlotCurveItem, self).to_dict())
         return dic_
 
@@ -213,7 +218,15 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         """Return the list of channels this curve is connected to"""
         return [self.channel, self.archive_channel]
 
-
+    def set_address(self, new_address):
+        print(self.no_live_data, "test")
+        if new_address is None or len(str(new_address)) < 1 or self.no_live_data:
+            self.channel = None
+            return
+        self.channel = PyDMChannel(address=new_address,
+                                   connection_slot=self.connectionStateChanged,
+                                   value_slot=self.receiveNewValue)
+        
 class PyDMArchiverTimePlot(PyDMTimePlot):
     """
     PyDMArchiverTimePlot is a PyDMTimePlot with support for receiving data from
@@ -251,6 +264,7 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         self._prev_x = None  # Holds the minimum x-value of the previous update of the plot
         self._starting_timestamp = time.time()  # The timestamp at which the plot was first rendered
         self._archive_request_queued = False
+        self._live_data = True
 
     def updateXAxis(self, update_immediately: bool = False) -> None:
         """Manages the requests to archiver appliance. When the user pans or zooms the x axis to the left,
@@ -400,6 +414,34 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 symbolSize=d.get("symbolSize"),
                 yAxisName=d.get("yAxisName"),
                 useArchiveData=d.get("useArchiveData"),
+                noLiveData=d.get('noLiveData'),
             )
 
     curves = Property("QStringList", getCurves, setCurves, designable=False)
+
+    @Property(bool)
+    def liveData(self):
+        """
+        A choice whether or not to use the channel to get live data.
+
+        Returns
+        -------
+        _live_data : bool
+            True means that the widget will get live data from the channel.
+        """
+        return self._live_data
+
+    @liveData.setter
+    def liveData(self, value):
+        """
+        A choice whether or not to use the channel to get live data.
+
+        If set to False, the graph will not get data from the channel and only display archived data.
+
+        Parameters
+        ----------
+        value : bool
+            True means that the widget will get live data from the channel.
+        """
+        if self._live_data != bool(value):
+            self._live_data = value

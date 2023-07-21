@@ -65,7 +65,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
 
     _channels = ("channel",)
 
-    def __init__(self, channel_address=None, plot_by_timestamps=True, plot_style="Line", **kws):
+    def __init__(self, channel_address=None, no_live_data=False, plot_by_timestamps=True, plot_style='Line', **kws):
         """
         Parameters
         ----------
@@ -88,7 +88,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
         self._plot_by_timestamps = plot_by_timestamps
 
         self.plot_style = plot_style
-
+        self.no_live_data=no_live_data
         self._bufferSize = MINIMUM_BUFFER_SIZE
         self._update_mode = PyDMTimePlot.OnValueChange
 
@@ -116,6 +116,10 @@ class TimePlotCurveItem(BasePlotCurveItem):
 
     @address.setter
     def address(self, new_address):
+        self.set_address(new_address)
+
+    def set_address(self, new_address):
+        """ A setter method without a pyqt decorator so subclasses can use this functionality """
         if new_address is None or len(str(new_address)) < 1:
             self.channel = None
             return
@@ -468,7 +472,10 @@ class PyDMTimePlot(BasePlot, updateMode):
         thresholdColor=None,
         yAxisName=None,
         useArchiveData=False,
+        noLiveData=False,
     ):
+    
+                    
         """
         Adds a new curve to the current plot
 
@@ -526,6 +533,7 @@ class PyDMTimePlot(BasePlot, updateMode):
             color=color,
             yAxisName=yAxisName,
             useArchiveData=useArchiveData,
+            noLiveData=noLiveData,
             **plot_opts
         )
         new_curve.setUpdatesAsynchronously(self.updateMode)
@@ -544,7 +552,7 @@ class PyDMTimePlot(BasePlot, updateMode):
 
         new_curve.data_changed.connect(self.set_needs_redraw)
         self.redraw_timer.start()
-
+        print(noLiveData, "hmm")
         return new_curve
 
     def createCurveItem(self, *args, **kwargs):
