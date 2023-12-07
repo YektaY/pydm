@@ -31,8 +31,8 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     use_archive_data : bool
         If True, requests will be made to archiver appliance for archived data when
         the plot is zoomed or scrolled to the left.
-    no_live_data : bool 
-        only fetch data from the archiver appliance for archived data. 
+    no_live_data : bool
+        only fetch data from the archiver appliance for archived data.
     **kws : dict[str: any]
         Additional parameters supported by pyqtgraph.PlotDataItem.
     """
@@ -41,7 +41,13 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     archive_data_request_signal = Signal(float, float, str)
     archive_data_received_signal = Signal()
 
-    def __init__(self, channel_address: Optional[str] = None, use_archive_data: bool = True, no_live_data: bool = False, **kws):
+    def __init__(
+        self,
+        channel_address: Optional[str] = None,
+        use_archive_data: bool = True,
+        no_live_data: bool = False,
+        **kws
+    ):
         super().__init__(channel_address, no_live_data, **kws)
         print(no_live_data, "hmhmhm")
         self.use_archive_data = use_archive_data
@@ -49,7 +55,9 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self.archive_channel = None
         self.archive_points_accumulated = 0
         self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
-        self.archive_data_buffer = np.zeros((2, self._archiveBufferSize), order="f", dtype=float)
+        self.archive_data_buffer = np.zeros(
+            (2, self._archiveBufferSize), order="f", dtype=float
+        )
 
         # When optimized or mean value data is requested, we can display error bars representing
         # the full range of values retrieved
@@ -66,7 +74,11 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
                 ("useArchiveData", self.use_archive_data),
             ]
         )
-        dic_ = OrderedDict([("noLiveData", self.no_live_data), ])
+        dic_ = OrderedDict(
+            [
+                ("noLiveData", self.no_live_data),
+            ]
+        )
         dic_.update(super(ArchivePlotCurveItem, self).to_dict())
         return dic_
 
@@ -81,7 +93,9 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
             archive_address = archiver_prefix + address
 
         self.archive_channel = PyDMChannel(
-            address=archive_address, value_slot=self.receiveArchiveData, value_signal=self.archive_data_request_signal
+            address=archive_address,
+            value_slot=self.receiveArchiveData,
+            value_signal=self.archive_data_request_signal,
         )
 
     @Slot(np.ndarray)
@@ -107,12 +121,18 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
                 archive_data_length -= 1
                 max_x = data[0][archive_data_length - 1]
 
-        self.archive_data_buffer[0, len(self.archive_data_buffer[0]) - archive_data_length :] = data[0]
-        self.archive_data_buffer[1, len(self.archive_data_buffer[0]) - archive_data_length :] = data[1]
+        self.archive_data_buffer[
+            0, len(self.archive_data_buffer[0]) - archive_data_length :
+        ] = data[0]
+        self.archive_data_buffer[
+            1, len(self.archive_data_buffer[0]) - archive_data_length :
+        ] = data[1]
         self.archive_points_accumulated = archive_data_length
 
         # Error bars
-        if data.shape[0] == 5:  # 5 indicates optimized data was requested from the archiver
+        if (
+            data.shape[0] == 5
+        ):  # 5 indicates optimized data was requested from the archiver
             self.error_bar_item.setData(
                 x=self.archive_data_buffer[0, -self.archive_points_accumulated :],
                 y=self.archive_data_buffer[1, -self.archive_points_accumulated :],
@@ -149,17 +169,25 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         max_insertion_index = np.searchsorted(self.archive_data_buffer[0], max_x)
         # Delete any non-raw data between the indices so we don't have multiple data points for the same timestamp
         self.archive_data_buffer = np.delete(
-            self.archive_data_buffer, slice(min_insertion_index, max_insertion_index), axis=1
+            self.archive_data_buffer,
+            slice(min_insertion_index, max_insertion_index),
+            axis=1,
         )
         num_points_deleted = max_insertion_index - min_insertion_index
         delta_points = archive_data_length - num_points_deleted
         if archive_data_length > num_points_deleted:
             # If the insertion will overflow the data buffer, need to delete the oldest points
-            self.archive_data_buffer = np.delete(self.archive_data_buffer, slice(0, delta_points), axis=1)
+            self.archive_data_buffer = np.delete(
+                self.archive_data_buffer, slice(0, delta_points), axis=1
+            )
         else:
-            self.archive_data_buffer = np.insert(self.archive_data_buffer, [0], np.zeros((2, delta_points)), axis=1)
+            self.archive_data_buffer = np.insert(
+                self.archive_data_buffer, [0], np.zeros((2, delta_points)), axis=1
+            )
         min_insertion_index = np.searchsorted(self.archive_data_buffer[0], min_x)
-        self.archive_data_buffer = np.insert(self.archive_data_buffer, [min_insertion_index], data[0:2], axis=1)
+        self.archive_data_buffer = np.insert(
+            self.archive_data_buffer, [min_insertion_index], data[0:2], axis=1
+        )
 
         self.archive_points_accumulated += archive_data_length - num_points_deleted
 
@@ -174,14 +202,18 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
             try:
                 x = np.concatenate(
                     (
-                        self.archive_data_buffer[0, -self.archive_points_accumulated :].astype(float),
+                        self.archive_data_buffer[
+                            0, -self.archive_points_accumulated :
+                        ].astype(float),
                         self.data_buffer[0, -self.points_accumulated :].astype(float),
                     )
                 )
 
                 y = np.concatenate(
                     (
-                        self.archive_data_buffer[1, -self.archive_points_accumulated :].astype(float),
+                        self.archive_data_buffer[
+                            1, -self.archive_points_accumulated :
+                        ].astype(float),
                         self.data_buffer[1, -self.points_accumulated :].astype(float),
                     )
                 )
@@ -196,7 +228,9 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         Initialize the archive data buffer used for this curve.
         """
         self.archive_points_accumulated = 0
-        self.archive_data_buffer = np.zeros((2, self._archiveBufferSize), order="f", dtype=float)
+        self.archive_data_buffer = np.zeros(
+            (2, self._archiveBufferSize), order="f", dtype=float
+        )
 
     def getArchiveBufferSize(self) -> int:
         """Return the length of the archive buffer"""
@@ -223,10 +257,13 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         if new_address is None or len(str(new_address)) < 1 or self.no_live_data:
             self.channel = None
             return
-        self.channel = PyDMChannel(address=new_address,
-                                   connection_slot=self.connectionStateChanged,
-                                   value_slot=self.receiveNewValue)
-        
+        self.channel = PyDMChannel(
+            address=new_address,
+            connection_slot=self.connectionStateChanged,
+            value_slot=self.receiveNewValue,
+        )
+
+
 class PyDMArchiverTimePlot(PyDMTimePlot):
     """
     PyDMArchiverTimePlot is a PyDMTimePlot with support for receiving data from
@@ -261,8 +298,12 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         )
         self.optimized_data_bins = optimized_data_bins
         self._min_x = None
-        self._prev_x = None  # Holds the minimum x-value of the previous update of the plot
-        self._starting_timestamp = time.time()  # The timestamp at which the plot was first rendered
+        self._prev_x = (
+            None  # Holds the minimum x-value of the previous update of the plot
+        )
+        self._starting_timestamp = (
+            time.time()
+        )  # The timestamp at which the plot was first rendered
         self._archive_request_queued = False
         self._live_data = True
 
@@ -272,19 +313,25 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         if len(self._curves) == 0:
             return
 
-        min_x = self.plotItem.getAxis("bottom").range[0]  # Gets the leftmost timestamp displayed on the x-axis
+        min_x = self.plotItem.getAxis("bottom").range[
+            0
+        ]  # Gets the leftmost timestamp displayed on the x-axis
         max_x = max([curve.max_x() for curve in self._curves])
         max_range = self.plotItem.getAxis("bottom").range[1]
         if min_x == 0:  # This is zero when the plot first renders
             min_x = time.time()
             self._min_x = min_x
-            self._starting_timestamp = min_x - DEFAULT_TIME_SPAN  # A bit of a buffer so we don't overwrite live data
+            self._starting_timestamp = (
+                min_x - DEFAULT_TIME_SPAN
+            )  # A bit of a buffer so we don't overwrite live data
             if self.getTimeSpan() != DEFAULT_TIME_SPAN:
                 # Initialize x-axis based on the time span as well as trigger a call to the archiver below
                 self._min_x = self._min_x - self.getTimeSpan()
                 self._archive_request_queued = True
                 self.requestDataFromArchiver()
-            self.plotItem.setXRange(self._min_x, time.time(), padding=0.0, update=update_immediately)
+            self.plotItem.setXRange(
+                self._min_x, time.time(), padding=0.0, update=update_immediately
+            )
         elif min_x < self._min_x and not self.plotItem.isAnyXAutoRange():
             # This means the user has manually scrolled to the left, so request archived data
             self._min_x = min_x
@@ -303,10 +350,17 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 self.setTimeSpan(max_x - min_x)
             else:
                 # Keep the plot moving with a rolling window based on the current timestamp
-                self.plotItem.setXRange(max_x - self.getTimeSpan(), max_x, padding=0.0, update=update_immediately)
+                self.plotItem.setXRange(
+                    max_x - self.getTimeSpan(),
+                    max_x,
+                    padding=0.0,
+                    update=update_immediately,
+                )
         self._prev_x = min_x
 
-    def requestDataFromArchiver(self, min_x: Optional[float] = None, max_x: Optional[float] = None) -> None:
+    def requestDataFromArchiver(
+        self, min_x: Optional[float] = None, max_x: Optional[float] = None
+    ) -> None:
         """
         Make the request to the archiver appliance data plugin for archived data.
 
@@ -327,7 +381,9 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
             if curve.use_archive_data:
                 if max_x is None:
                     if curve.points_accumulated > 0:
-                        max_x = curve.data_buffer[0][curve.getBufferSize() - curve.points_accumulated]
+                        max_x = curve.data_buffer[0][
+                            curve.getBufferSize() - curve.points_accumulated
+                        ]
                     else:
                         max_x = self._starting_timestamp
                 requested_seconds = max_x - min_x
@@ -338,7 +394,9 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 max_data_request = int(0.80 * self.getArchiveBufferSize())
                 if requested_seconds > max_data_request:
                     processing_command = "optimized_" + str(self.optimized_data_bins)
-                curve.archive_data_request_signal.emit(min_x, max_x - 1, processing_command)
+                curve.archive_data_request_signal.emit(
+                    min_x, max_x - 1, processing_command
+                )
 
     def getArchiveBufferSize(self) -> int:
         """Returns the size of the data buffer used to store archived data"""
@@ -357,7 +415,9 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         """Take any action needed when this plot receives new data from archiver appliance"""
         max_x = max([curve.max_x() for curve in self._curves])
         # Assure the user sees all data available whenever the request data is returned
-        self.plotItem.setXRange(max_x - self.getTimeSpan(), max_x, padding=0.0, update=True)
+        self.plotItem.setXRange(
+            max_x - self.getTimeSpan(), max_x, padding=0.0, update=True
+        )
         self._archive_request_queued = False
 
     def setTimeSpan(self, value):
@@ -414,7 +474,7 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 symbolSize=d.get("symbolSize"),
                 yAxisName=d.get("yAxisName"),
                 useArchiveData=d.get("useArchiveData"),
-                noLiveData=d.get('noLiveData'),
+                noLiveData=d.get("noLiveData"),
             )
 
     curves = Property("QStringList", getCurves, setCurves, designable=False)
