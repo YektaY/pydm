@@ -28,7 +28,7 @@ class archiver_time_plot_example(Display):
         self.main_layout.addWidget(self.plot_archived)
 
         # self.plot.addCurve(curve_item)
-        self.plot_live.createCurveItem(
+        self.plot_live.addYChannel(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
             color="red",
@@ -38,7 +38,7 @@ class archiver_time_plot_example(Display):
         )
 
         # self.plot.addCurve(curve_item)
-        self.plot_archived.createCurveItem(
+        self.plot_archived.addYChannel(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
             color="blue",
