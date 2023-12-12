@@ -253,6 +253,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
 
     def set_address(self, new_address):
         if new_address is None or len(str(new_address)) < 1 or self.no_live_data:
+            self.channel.disconnect(True)
             self.channel = None
             return
         self.channel = PyDMChannel(

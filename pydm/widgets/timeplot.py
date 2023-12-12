@@ -577,7 +577,6 @@ class PyDMTimePlot(BasePlot, updateMode):
 
         new_curve.data_changed.connect(self.set_needs_redraw)
         self.redraw_timer.start()
-        print(noLiveData, "hmm")
         return new_curve
 
     def createCurveItem(self, *args, **kwargs):

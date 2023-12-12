@@ -27,7 +27,6 @@ class archiver_time_plot_example(Display):
         self.main_layout.addWidget(self.plot_live)
         self.main_layout.addWidget(self.plot_archived)
 
-        # self.plot.addCurve(curve_item)
         self.plot_live.addYChannel(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
@@ -37,7 +36,6 @@ class archiver_time_plot_example(Display):
             noLiveData=False,
         )
 
-        # self.plot.addCurve(curve_item)
         self.plot_archived.addYChannel(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
@@ -46,6 +44,5 @@ class archiver_time_plot_example(Display):
             useArchiveData=True,
             noLiveData=True,
         )
-        self.plot_live.updateXAxis(True)
 
 
