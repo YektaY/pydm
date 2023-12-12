@@ -27,17 +27,8 @@ class archiver_time_plot_example(Display):
         self.main_layout.addWidget(self.plot_live)
         self.main_layout.addWidget(self.plot_archived)
 
-        self.plot_live.createCurveItem(
-            y_channel="ca://DEMO:ANGLE",
-            name="name",
-            color="red",
-            plot_by_timestamps=True,
-            yAxisName="Axis",
-            useArchiveData=True,
-            noLiveData=False,
-        )
         # self.plot.addCurve(curve_item)
-        self.plot_live.addYChannel(
+        self.plot_live.createCurveItem(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
             color="red",
@@ -46,17 +37,8 @@ class archiver_time_plot_example(Display):
             noLiveData=False,
         )
 
-        self.plot_archived.createCurveItem(
-            y_channel="ca://DEMO:ANGLE",
-            name="name",
-            color="blue",
-            plot_by_timestamps=True,
-            yAxisName="Axis",
-            useArchiveData=True,
-            noLiveData=True,
-        )
         # self.plot.addCurve(curve_item)
-        self.plot_archived.addYChannel(
+        self.plot_archived.createCurveItem(
             y_channel="XCOR:LI29:302:IACT",
             name="name",
             color="blue",
