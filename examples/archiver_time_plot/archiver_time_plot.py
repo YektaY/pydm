@@ -5,9 +5,9 @@ from qtpy.QtWidgets import QHBoxLayout, QApplication
 from pydm.widgets import PyDMArchiverTimePlot
 
 
-class archive_time_plot_example(Display):
+class archiver_time_plot_example(Display):
     def __init__(self, parent=None, args=None, macros=None):
-        super(archive_time_plot_example, self).__init__(
+        super(archiver_time_plot_example, self).__init__(
             parent=parent, args=args, macros=None
         )
         self.app = QApplication.instance()

@@ -48,8 +48,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         no_live_data: bool = False,
         **kws
     ):
-        super().__init__(channel_address, no_live_data, **kws)
-        print(no_live_data, "hmhmhm")
+        super().__init__(channel_address, **kws)
         self.use_archive_data = use_archive_data
         self.no_live_data = no_live_data
         self.archive_channel = None
@@ -253,7 +252,6 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         return [self.channel, self.archive_channel]
 
     def set_address(self, new_address):
-        print(self.no_live_data, "test")
         if new_address is None or len(str(new_address)) < 1 or self.no_live_data:
             self.channel = None
             return
