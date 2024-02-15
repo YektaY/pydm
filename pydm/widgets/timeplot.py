@@ -68,7 +68,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
     def __init__(
         self,
         channel_address=None,
-        no_live_data=False,
+        live_data=True,
         plot_by_timestamps=True,
         plot_style="Line",
         **kws
@@ -95,7 +95,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
         self._plot_by_timestamps = plot_by_timestamps
 
         self.plot_style = plot_style
-        self.no_live_data = no_live_data
+        self.live_data = live_data
         self._bufferSize = MINIMUM_BUFFER_SIZE
         self._update_mode = PyDMTimePlot.OnValueChange
 
@@ -466,6 +466,7 @@ class PyDMTimePlot(BasePlot, updateMode):
         self.update_timer.setInterval(self._update_interval)
         self._update_mode = PyDMTimePlot.OnValueChange
         self._needs_redraw = True
+        self.useArchiveData = False
 
         self.labels = {"left": None, "right": None, "bottom": None}
 
@@ -495,7 +496,7 @@ class PyDMTimePlot(BasePlot, updateMode):
         thresholdColor=None,
         yAxisName=None,
         useArchiveData=False,
-        noLiveData=False,
+        liveData=True,
     ):
         """
         Adds a new curve to the current plot
@@ -554,11 +555,14 @@ class PyDMTimePlot(BasePlot, updateMode):
             color=color,
             yAxisName=yAxisName,
             useArchiveData=useArchiveData,
-            noLiveData=noLiveData,
+            liveData=liveData,
             **plot_opts
         )
         new_curve.setUpdatesAsynchronously(self.updateMode)
         new_curve.setBufferSize(self._bufferSize)
+
+        if useArchiveData:
+            self.useArchiveData = True
 
         self.update_timer.timeout.connect(new_curve.asyncUpdate)
         if plot_style == "Bar":
@@ -619,7 +623,7 @@ class PyDMTimePlot(BasePlot, updateMode):
         """
         Redraw the graph
         """
-        if not self._needs_redraw:
+        if not self._needs_redraw and not self.useArchiveData:
             return
 
         self.updateXAxis()

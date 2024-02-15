@@ -31,8 +31,8 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     use_archive_data : bool
         If True, requests will be made to archiver appliance for archived data when
         the plot is zoomed or scrolled to the left.
-    no_live_data : bool
-        only fetch data from the archiver appliance for archived data.
+    live_data : bool
+        fetch live and archived data from the archiver appliance and from the PV.
     **kws : dict[str: any]
         Additional parameters supported by pyqtgraph.PlotDataItem.
     """
@@ -45,12 +45,12 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self,
         channel_address: Optional[str] = None,
         use_archive_data: bool = True,
-        no_live_data: bool = False,
+        live_data: bool = True,
         **kws
     ):
         super().__init__(channel_address, **kws)
         self.use_archive_data = use_archive_data
-        self.no_live_data = no_live_data
+        self.live_data = live_data
         self.archive_channel = None
         self.archive_points_accumulated = 0
         self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
@@ -68,16 +68,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
 
     def to_dict(self) -> OrderedDict:
         """Returns an OrderedDict representation with values for all properties needed to recreate this curve."""
-        dic_ = OrderedDict(
-            [
-                ("useArchiveData", self.use_archive_data),
-            ]
-        )
-        dic_ = OrderedDict(
-            [
-                ("noLiveData", self.no_live_data),
-            ]
-        )
+        dic_ = OrderedDict([("useArchiveData", self.use_archive_data), ("liveData", self.live_data)])
         dic_.update(super(ArchivePlotCurveItem, self).to_dict())
         return dic_
 
@@ -252,7 +243,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         return [self.channel, self.archive_channel]
 
     def set_address(self, new_address):
-        if new_address is None or len(str(new_address)) < 1 or self.no_live_data:
+        if new_address is None or len(str(new_address)) < 1 or not self.live_data:
             self.channel.disconnect(True)
             self.channel = None
             return
@@ -261,6 +252,13 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
             connection_slot=self.connectionStateChanged,
             value_slot=self.receiveNewValue,
         )
+
+    def receiveNewValue(self, new_value):
+        """
+
+        """
+        if self.live_data:
+            super().receiveNewValue()
 
 
 class PyDMArchiverTimePlot(PyDMTimePlot):
@@ -309,8 +307,10 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
     def updateXAxis(self, update_immediately: bool = False) -> None:
         """Manages the requests to archiver appliance. When the user pans or zooms the x axis to the left,
         a request will be made for backfill data"""
+
         if len(self._curves) == 0:
             return
+
 
         min_x = self.plotItem.getAxis("bottom").range[
             0
@@ -473,7 +473,7 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 symbolSize=d.get("symbolSize"),
                 yAxisName=d.get("yAxisName"),
                 useArchiveData=d.get("useArchiveData"),
-                noLiveData=d.get("noLiveData"),
+                liveData=d.get("liveData"),
             )
 
     curves = Property("QStringList", getCurves, setCurves, designable=False)
@@ -504,3 +504,4 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         """
         if self._live_data != bool(value):
             self._live_data = value
+

@@ -28,21 +28,22 @@ class archiver_time_plot_example(Display):
         self.main_layout.addWidget(self.plot_archived)
 
         self.plot_live.addYChannel(
-            y_channel="XCOR:LI29:302:IACT",
+            y_channel="CA://XCOR:LI29:302:IACT",
             name="name",
             color="red",
             yAxisName="Axis",
             useArchiveData=True,
-            noLiveData=False,
+            liveData=False,
         )
+        self.plot_live.updateXAxis(True)
 
         self.plot_archived.addYChannel(
-            y_channel="XCOR:LI29:302:IACT",
+            y_channel="CA://XCOR:LI29:302:IACT",
             name="name",
             color="blue",
             yAxisName="Axis",
             useArchiveData=True,
-            noLiveData=True,
+            liveData=True,
         )
-
+        self.plot_archived.updateXAxis(True)
 
