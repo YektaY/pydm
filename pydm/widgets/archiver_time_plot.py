@@ -45,12 +45,12 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self,
         channel_address: Optional[str] = None,
         use_archive_data: bool = True,
-        live_data: bool = True,
+        liveData: bool = True,
         **kws
     ):
         super().__init__(channel_address, **kws)
         self.use_archive_data = use_archive_data
-        self.live_data = live_data
+        self.liveData = liveData
         self.archive_channel = None
         self.archive_points_accumulated = 0
         self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
@@ -257,8 +257,11 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         """
 
         """
-        if self.live_data:
-            super().receiveNewValue()
+        if self.liveData:
+            super().receiveNewValue(new_value)
+            print("in")
+        else:
+            print("out")
 
 
 class PyDMArchiverTimePlot(PyDMTimePlot):
