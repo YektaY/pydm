@@ -9,8 +9,8 @@ from pydm.utilities import remove_protocol, is_qt_designer
 from pydm.widgets.channel import PyDMChannel
 from pydm.widgets.timeplot import TimePlotCurveItem
 from pydm.widgets import PyDMTimePlot
-from qtpy.QtCore import QObject, QTimer, Property, Signal, Slot
-from qtpy.QtGui import QColor
+from qtpy.QtCore import QObject, QTimer, Property, Signal, Slot, Qt
+from qtpy.QtGui import QColor, QPen
 import logging
 from math import *  # noqa
 from statistics import mean  # noqa
@@ -53,7 +53,12 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     prompt_archive_request = Signal()
 
     def __init__(
-        self, channel_address: Optional[str] = None, use_archive_data: bool = True, liveData: bool = True, **kws
+        self,
+        channel_address: Optional[str] = None,
+        use_archive_data: bool = True,
+        liveData: bool = True,
+        current_point_always_vis: bool = False,
+        **kws
     ):
         self.archive_channel = None
         super(ArchivePlotCurveItem, self).__init__(**kws)
@@ -62,6 +67,11 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
         self.archive_data_buffer = np.zeros((2, self._archiveBufferSize), order="f", dtype=float)
         self._liveData = liveData
+
+        if current_point_always_vis:
+            self._extension_line = BasePlotCurveItem()
+        else:
+            self._extension_line = None
 
         # When optimized or mean value data is requested, we can display error bars representing
         # the full range of values retrieved
@@ -242,9 +252,43 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
                 )
 
                 self.setData(y=y, x=x)
+
+                if self._extension_line is not None:
+                    self.add_infinite_line()
+
             except (ZeroDivisionError, OverflowError, TypeError):
                 # Solve an issue with pyqtgraph and initial downsampling
                 pass
+
+    def add_infinite_line(self) -> None:
+        """
+        Creates a dotted line from the lastest point in the buffer
+        (live or archived depending on if live data is active).
+        """
+        if self._extension_line is None:
+            return
+
+        if self._liveData:
+            if self.data_buffer.size == 0:
+                return
+            x_last = self.data_buffer[-1, 0]
+            y_last = self.data_buffer[-1, 1]
+        else:
+            if self.archive_data_buffer.size == 0:
+                return
+            x_last = self.archive_data_buffer[-1, 0]
+            y_last = self.archive_data_buffer[-1, 1]
+
+        x_infinity = x_last + 1e6
+
+        x_line = np.array([x_last, x_infinity])
+        y_line = np.array([y_last, y_last])
+
+        main_pen = self._pen
+        dotted_pen = QPen(main_pen.color(), main_pen.width(), Qt.DotLine)
+
+        self._extension_line.setPen(dotted_pen)
+        self._extension_line.setData(x_line, y_line)
 
     def initializeArchiveBuffer(self) -> None:
         """
