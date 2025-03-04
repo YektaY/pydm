@@ -4,7 +4,7 @@ import warnings
 from abc import abstractmethod
 from qtpy.QtGui import QColor, QBrush, QMouseEvent
 from qtpy.QtCore import Signal, Slot, Property, QTimer, Qt, QEvent, QObject, QRect
-from qtpy.QtWidgets import QToolTip, QWidget
+from qtpy.QtWidgets import QToolTip, QWidget, QGraphicsLineItem
 from .. import utilities
 from pyqtgraph import (
     AxisItem,
@@ -741,6 +741,14 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         self.horizontal_crosshair_line = None
         self.crosshair_movement_proxy = None
 
+        # Scene-based crosshair items
+        self.scene_vline = None
+        self.scene_hline = None
+        self.scene_crosshair_enabled = False
+
+        # We’ll keep track of a SignalProxy or similar for mouse motion
+        self.scene_crosshair_proxy = None
+
         # Mouse mode to 1 button (left button draw rectangle for zoom)
         self.plotItem.getViewBox().setMouseMode(ViewBox.RectMode)
 
@@ -1456,6 +1464,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         (self.redraw_timer.stop() if self.redraw_timer.isActive() else self.redraw_timer.start())
         return self.redraw_timer.isActive()
 
+    '''
     def mouseMoved(self, evt: Any) -> None:
         """
         Handle crosshair updates when the mouse moves.
@@ -1478,7 +1487,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         Returns
         -------
         None
-        """
+        """        
         if isinstance(evt, tuple):  
             pos = evt[0]  
         else:
@@ -1493,7 +1502,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                 self.horizontal_crosshair_line.setPos(mouse_point.y())
 
                 self.crosshair_position_updated.emit(mouse_point.x(), mouse_point.y())
-
+    '''
+    '''
     def enableCrosshair(
         self,
         is_enabled: bool,
@@ -1575,4 +1585,104 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                     proxy.sigDelayed.disconnect(proxy.slot)
                 except Exception:
                     pass
+    '''
 
+    def enableSceneCrosshair(self, enabled=True, pen=(200, 50, 50), width=1):
+        """
+        Enables or disables a "physically continuous" crosshair that spans the entire
+        PlotWidget scene (including multiple overlaid axes).
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether to enable or disable the scene-level crosshair.
+        pen : Any
+            A pen specification (color, etc.) acceptable by pyqtgraph.mkPen().
+        width : int
+            Line thickness for the crosshair.
+        """
+
+        if enabled and not self.scene_crosshair_enabled:
+            # Create 2 QGraphicsLineItems for vertical & horizontal lines
+            # in the top-level scene coordinates
+            self.scene_vline = QGraphicsLineItem()
+            self.scene_hline = QGraphicsLineItem()
+
+            # Customize their appearance
+            crosshair_pen = mkPen(pen, width=width)
+            self.scene_vline.setPen(crosshair_pen)
+            self.scene_hline.setPen(crosshair_pen)
+
+            # Add them to the *scene* (not to the PlotItem or ViewBox)
+            self.plotItem.scene().addItem(self.scene_vline)
+            self.plotItem.scene().addItem(self.scene_hline)
+
+            # Listen to scene-wide mouse moves
+            # - self.plotItem.scene().sigMouseMoved gives a QPointF in scene coords
+            #   but you may also want to track actual Qt events. For most interactive
+            #   uses, sigMouseMoved is sufficient.
+            self.scene_crosshair_proxy = SignalProxy(
+                self.plotItem.scene().sigMouseMoved,
+                rateLimit=60,
+                slot=self.onSceneMouseMoved
+            )
+
+            self.scene_crosshair_enabled = True
+
+        elif not enabled and self.scene_crosshair_enabled:
+            # Remove the line items from the scene
+            if self.scene_vline:
+                self.plotItem.scene().removeItem(self.scene_vline)
+                self.scene_vline = None
+            if self.scene_hline:
+                self.plotItem.scene().removeItem(self.scene_hline)
+                self.scene_hline = None
+
+            # Disconnect the proxy
+            if self.scene_crosshair_proxy:
+                self.scene_crosshair_proxy.disconnect()
+                self.scene_crosshair_proxy = None
+
+            self.scene_crosshair_enabled = False
+
+    def onSceneMouseMoved(self, event):
+        """
+        Slot connected to the scene().sigMouseMoved signal via SignalProxy.
+        event is typically (scenePos: QPointF) in a tuple for PyQtGraph  (pos, event).
+        """
+        if not self.scene_crosshair_enabled:
+            return
+
+        if isinstance(event, tuple):
+            scene_pos = event[0]  # The first element is the QPointF
+        else:
+            scene_pos = event  # Might already be a QPointF
+
+        # If out of scene bounds, you can either hide the lines or clamp them
+        if not self.plotItem.sceneBoundingRect().contains(scene_pos):
+            return  # or hide the lines instead
+
+        # Get the bounding rect of the entire scene
+        scene_rect = self.plotItem.scene().sceneRect()
+        left, right = scene_rect.left(), scene_rect.right()
+        top, bottom = scene_rect.top(), scene_rect.bottom()
+
+        # Extract x,y from the scene coordinates
+        x = scene_pos.x()
+        y = scene_pos.y()
+
+        # Update the QGraphicsLineItem so it spans the entire scene
+        # Note: QGraphics coordinates go top-left -> bottom-right
+        # but typically the y-axis grows downwards. If top < bottom, that’s normal in Qt coordinates.
+        if self.scene_vline:
+            self.scene_vline.setLine(x, top, x, bottom)
+        if self.scene_hline:
+            self.scene_hline.setLine(left, y, right, y)
+
+        # If you also want the (data_x, data_y) under the cursor,
+        # convert scene coords -> data coords for the main ViewBox:
+        mouse_point = self.plotItem.getViewBox().mapSceneToView(scene_pos)
+        data_x, data_y = mouse_point.x(), mouse_point.y()
+
+        # Emit a signal if you want
+        self.crosshair_position_updated.emit(data_x, data_y)

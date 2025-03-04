@@ -1,19 +1,23 @@
 import json
+import types
 import re
 import time
 import numpy as np
 from collections import OrderedDict
-from typing import List, Optional
-from pyqtgraph import DateAxisItem, ErrorBarItem
+from typing import List, Optional, Any
+from pyqtgraph import DateAxisItem, ErrorBarItem, SignalProxy, mkPen
 from pydm.utilities import remove_protocol, is_qt_designer
 from pydm.widgets.channel import PyDMChannel
 from pydm.widgets.timeplot import TimePlotCurveItem
 from pydm.widgets import PyDMTimePlot
-from qtpy.QtCore import QObject, QTimer, Property, Signal, Slot
-from qtpy.QtGui import QColor
+from qtpy.QtCore import QObject, QTimer, Property, Signal, Slot, QPointF
+from qtpy.QtGui import QColor, QCursor
+from qtpy.QtWidgets import QGraphicsLineItem
 import logging
 from math import *  # noqa
 from statistics import mean  # noqa
+
+
 
 # We noqa those two because those functions/vars are useful in eval() but
 # are never explicitly called by us, only in the background.
@@ -217,6 +221,7 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self.archive_data_buffer = np.insert(self.archive_data_buffer, [min_insertion_index], data[0:2], axis=1)
 
         self.archive_points_accumulated += archive_data_length - num_points_deleted
+
 
     @Slot()
     def redrawCurve(self, min_x=None, max_x=None) -> None:
@@ -784,7 +789,9 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         self._prev_x = self._min_x  # Holds the minimum x-value of the previous update of the plot
         self._archive_request_queued = False
         self.setTimeSpan(DEFAULT_TIME_SPAN)
-
+        self._archiver_state = types.SimpleNamespace()
+        self._archiver_state.last_scene_pos = None
+    
     def updateXAxis(self, update_immediately: bool = False) -> None:
         """Manages the requests to archiver appliance. When the user pans or zooms the x axis to the left,
         a request will be made for backfill data"""
@@ -828,7 +835,56 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                     max_point - self.getTimeSpan(), max_point, padding=0.0, update=update_immediately
                 )
         self._prev_x = min_x
+    
+    
+    def redrawPlot(self):
+        """
+        Called by a timer or parent logic to re-draw the plot. We then 
+        re-call onSceneMouseMoved with the last known scene position,
+        so the crosshair & labels re-sync if user didn't move the mouse.
+        """
+        super().redrawPlot()
 
+        if self.scene_crosshair_enabled and self._archiver_state.last_scene_pos is not None:
+            self.onSceneMouseMoved(self._archiver_state.last_scene_pos)
+
+    def onSceneMouseMoved(self, event):
+        """
+        Called whenever the mouse moves in the scene (or we call it manually).
+        event is usually (QPointF, native_event).
+        """
+        if not self.scene_crosshair_enabled:
+            return
+
+        if isinstance(event, tuple):
+            scene_pos = event[0]  # the QPointF
+        else:
+            scene_pos = event  # might already be a QPointF
+
+        self._archiver_state.last_scene_pos = scene_pos  # store for redraw usage
+
+        # If mouse is out of the bounding rect, you might hide or skip
+        if not self.plotItem.sceneBoundingRect().contains(scene_pos):
+            return
+
+        # Update the crosshair lines in scene coords
+        scene_rect = self.plotItem.scene().sceneRect()
+        x = scene_pos.x()
+        y = scene_pos.y()
+
+        if self.scene_vline:
+            self.scene_vline.setLine(x, scene_rect.top(), x, scene_rect.bottom())
+        if self.scene_hline:
+            self.scene_hline.setLine(scene_rect.left(), y, scene_rect.right(), y)
+
+        # Convert scene -> data coords so we know which data points we are near
+        data_pt = self.plotItem.getViewBox().mapSceneToView(scene_pos)
+        data_x, data_y = data_pt.x(), data_pt.y()
+
+        # Example labeling logic (like your updateLabel):
+        self.updateLabel(data_x, data_y)
+        print("called??")
+   
     def requestDataFromArchiver(self, min_x: Optional[float] = None, max_x: Optional[float] = None) -> None:
         """
         Make the request to the archiver appliance data plugin for archived data.
@@ -969,6 +1025,7 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
 
     curves = Property("QStringList", getCurves, setCurves, designable=False)
 
+
     def addYChannel(
         self,
         y_channel=None,
@@ -1009,10 +1066,155 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         )
         if not is_qt_designer():
             self.requestDataFromArchiver()
+            pass 
         return curve
-
+    
     def addFormulaChannel(self, yAxisName: str, **kwargs) -> FormulaCurveItem:
         """Creates a FormulaCurveItem and links it to the given y axis"""
         FormulaCurve = FormulaCurveItem(yAxisName=yAxisName, **kwargs)
         self.plotItem.linkDataToAxis(FormulaCurve, yAxisName)
         return FormulaCurve
+    
+    def enableCrosshair(self, enabled=True):
+        """
+        Enable or disable a scene-based crosshair that stays physically pinned in the scene.
+        """
+        if enabled and not self.scene_crosshair_enabled:
+            # Create scene-level QGraphicsLineItems
+            self.scene_vline = QGraphicsLineItem()
+            self.scene_hline = QGraphicsLineItem()
+
+            pen = mkPen('yellow', width=1)
+            self.scene_vline.setPen(pen)
+            self.scene_hline.setPen(pen)
+
+            self.plotItem.scene().addItem(self.scene_vline)
+            self.plotItem.scene().addItem(self.scene_hline)
+
+            # Connect scene mouse moves via a SignalProxy
+            self.scene_crosshair_proxy = SignalProxy(
+                self.plotItem.scene().sigMouseMoved,
+                rateLimit=60,
+                slot=self.onSceneMouseMoved
+            )
+            self.scene_crosshair_enabled = True
+
+        elif not enabled and self.scene_crosshair_enabled:
+            if self.scene_vline:
+                self.plotItem.scene().removeItem(self.scene_vline)
+            if self.scene_hline:
+                self.plotItem.scene().removeItem(self.scene_hline)
+            if self.scene_crosshair_proxy:
+                self.scene_crosshair_proxy.disconnect()
+            self.scene_vline = None
+            self.scene_hline = None
+            self.scene_crosshair_proxy = None
+            self.scene_crosshair_enabled = False
+
+    '''
+    def updateLabel(self, x_val: float) -> None:
+        """
+        Update the label for each curve based on the vertical crosshair's x-coordinate (x_val).
+
+        For each curve in the `textItems` dictionary, this method retrieves the curve's data
+        (x and y arrays) and finds the data point closest to x_val. The label text displays the
+        actual data point's x and y values, but the label itself is always positioned at x_val,
+        keeping it aligned with the vertical crosshair.
+        """
+        if not np.isfinite(x_val):
+            return
+
+        if self.init_label:
+            self.initializeCurveLabels()
+            self.init_label = False
+
+        for curve, label in self.textItems.items():
+            xData, yData = curve.getData()
+            if xData is None or yData is None or len(xData) == 0:
+                label.setText("No data!")
+                continue
+
+            print("______________________start______________________")
+            print(xData)
+            print("______________________end______________________")
+
+            idx = np.searchsorted(xData, x_val, side='right') - 1
+            if idx < 0:
+                idx = 0
+            if idx >= len(yData):
+                idx = len(yData) - 1
+
+            real_x = xData[idx]
+            real_y = yData[idx]
+
+            if not (np.isfinite(real_x) and np.isfinite(real_y)):
+                label.setText("No data!")
+                continue
+
+            if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
+                curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
+                print(curve.y_axis_name)
+                curve_vb = self.plotItem.getViewBoxForAxis("bottom")
+                print(curve_vb.AllViews)
+            else:
+                curve_vb = self.getViewBox()
+
+            curve_vb.addItem(label)
+
+            if curve.channel.address is not None:
+                label.setText(f"x={real_x:.2f}\ny={real_y:.2f}\n{curve.channel.address}")
+            else:
+                label.setText(f"x={real_x:.2f}\ny={real_y:.2f}")
+
+            print(x_val)
+            print(self.vertical_crosshair_line.pos())
+            print(self.horizontal_crosshair_line.pos())
+            label.setPos(x_val, real_y)
+            print("label: ", label.x())
+    '''
+
+'''
+    def enableCrosshair(
+        self,
+        is_enabled: bool,
+        starting_x_pos: float = 0.0,
+        starting_y_pos: float = 0.0,
+        vertical_angle: float = 90,
+        horizontal_angle: float = 0,
+        vertical_movable: bool = False,
+        horizontal_movable: bool = False,
+    ) -> None:
+        """
+        Override to keep the original logic from the parent class, but move the
+        crosshair lines to the correct ViewBox that the data uses.
+        """
+
+        # 1) Call the parent method to create lines, movement proxy, etc.
+        super().enableCrosshair(
+            is_enabled,
+            starting_x_pos,
+            starting_y_pos,
+            vertical_angle,
+            horizontal_angle,
+            vertical_movable,
+            horizontal_movable,
+        )
+        if not is_enabled:
+                return
+
+        self._crosshair_vb = self.plotItem.getViewBoxForAxis("bottom")
+        if not self._crosshair_vb:
+            self._crosshair_vb = self.plotItem.getViewBox()
+
+        if self.vertical_crosshair_line in self.plotItem.items:
+            self.plotItem.removeItem(self.vertical_crosshair_line)
+        if self.horizontal_crosshair_line in self.plotItem.items:
+            self.plotItem.removeItem(self.horizontal_crosshair_line)
+
+        self._crosshair_vb.addItem(self.vertical_crosshair_line)
+        self._crosshair_vb.addItem(self.horizontal_crosshair_line)
+    '''
+
+
+
+

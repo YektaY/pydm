@@ -9,7 +9,7 @@ from qtpy.QtCore import Signal, Slot, Property, QTimer, Q_ENUMS, QPointF, Qt
 from .baseplot import BasePlot, BasePlotCurveItem
 from .channel import PyDMChannel
 from ..utilities import remove_protocol
-
+from qtpy.QtWidgets import QGraphicsLineItem
 import logging
 
 logger = logging.getLogger(__name__)
@@ -511,6 +511,11 @@ class PyDMTimePlot(BasePlot):
         self.auto_scroll_timer = QTimer()
         self.auto_scroll_timer.timeout.connect(self.auto_scroll)
 
+        self.scene_vline = None
+        self.scene_hline = None
+        self.scene_crosshair_proxy = None
+        self.scene_crosshair_enabled = False  
+
         self.textItems = {}
         self.crosshair = False 
         self.init_labels = False
@@ -658,7 +663,8 @@ class PyDMTimePlot(BasePlot):
     @Slot()
     def set_needs_redraw(self):
         self._needs_redraw = True
-
+    
+    '''
     @Slot()
     def redrawPlot(self):
         """
@@ -688,6 +694,58 @@ class PyDMTimePlot(BasePlot):
                 self.crosshair_position_updated.emit(mapped_point.x(), mapped_point.y())
 
         self._needs_redraw = False
+    '''
+
+    def redrawPlot(self):
+        """
+        Redraw the graph and ensure the scene-level crosshair is updated to the
+        current mouse position if needed.
+        """
+        if not self._needs_redraw:
+            return
+
+        self.updateXAxis()  # Existing logic to update the X axis, etc.
+
+        # Re-draw each TimePlotCurveItem
+        min_x = self.plotItem.getViewBox().state["viewRange"][0][0]
+        max_x = self.plotItem.getViewBox().state["viewRange"][0][1]
+        for curve in self._curves:
+            curve.redrawCurve(min_x=min_x, max_x=max_x)
+            self.plot_redrawn_signal.emit(curve)
+
+        # Now, if our crosshair is enabled at the scene level,
+        # update its position to match the current mouse pointer.
+        if self.scene_crosshair_enabled:
+            # 1) Get the mouse position in *widget* coords
+            global_pos = QCursor.pos()
+            local_pos = self.mapFromGlobal(global_pos)
+
+            # 2) Convert widget coords -> scene coords
+            scene_pos = self.mapToScene(local_pos)
+
+            # 3) Check if we are inside the scene bounding rect
+            if self.plotItem.sceneBoundingRect().contains(scene_pos):
+                # 4) Get the entire sceneRect for full-height/full-width lines
+                scene_rect = self.plotItem.scene().sceneRect()
+                x = scene_pos.x()
+                y = scene_pos.y()
+
+                # 5) Update the scene-level lines
+                if self.scene_vline is not None:
+                    self.scene_vline.setLine(x, scene_rect.top(), x, scene_rect.bottom())
+                if self.scene_hline is not None:
+                    self.scene_hline.setLine(scene_rect.left(), y, scene_rect.right(), y)
+
+                # 6) Convert scene coords -> data coords for labeling
+                data_point = self.plotItem.getViewBox().mapSceneToView(scene_pos)
+                data_x, data_y = data_point.x(), data_point.y()
+
+                # 7) Emit so your updateLabel(...) method can run
+                self.crosshair_position_updated.emit(data_x, data_y)
+
+        self._needs_redraw = False
+        print("ran")
+
 
     def updateXAxis(self, update_immediately=False):
         """
@@ -1116,6 +1174,8 @@ class PyDMTimePlot(BasePlot):
     Maximum Y-axis value visible on the plot.""",
     )
 
+
+    '''
     def enableCrosshair(
         self,
         is_enabled,
@@ -1271,6 +1331,218 @@ class PyDMTimePlot(BasePlot):
             else:
                 label.setText(f"x={real_x:.2f}\ny={real_y:.2f}")
             label.setPos(real_x, real_y)
+    '''
+
+    def enableCrosshair(
+        self,
+        is_enabled: bool,
+        starting_x_pos=0.0,
+        starting_y_pos=0.0,
+        vertical_angle=90,
+        horizontal_angle=0,
+        vertical_movable=False,
+        horizontal_movable=False,
+    ):
+        """
+        Display or remove a single "physically continuous" crosshair that spans
+        the entire scene, plus labeling of curve intersections.
+        
+        Parameters
+        ----------
+        is_enabled : bool
+            True to enable the crosshair; False to remove it.
+        starting_x_pos : float
+            Ignored in this new scene-based approach, but kept for API compatibility.
+        starting_y_pos : float
+            Same note: ignored here.
+        vertical_angle : int
+            Not used in this scene-based approach (the line is always vertical).
+        horizontal_angle : int
+            Not used in this scene-based approach (the line is always horizontal).
+        vertical_movable : bool
+            Not used with scene-based lines.
+        horizontal_movable : bool
+            Not used with scene-based lines.
+        """
+        if is_enabled and not self.scene_crosshair_enabled:
+            # Create scene-level QGraphicsLineItems
+            self.scene_vline = QGraphicsLineItem()
+            self.scene_hline = QGraphicsLineItem()
+
+            # Give them some pen for visibility
+            pen = mkPen(color='yellow', width=1)
+            self.scene_vline.setPen(pen)
+            self.scene_hline.setPen(pen)
+
+            # Add them to the top-level scene
+            self.plotItem.scene().addItem(self.scene_vline)
+            self.plotItem.scene().addItem(self.scene_hline)
+
+            # Listen to scene mouse moves
+            self.scene_crosshair_proxy = SignalProxy(
+                self.plotItem.scene().sigMouseMoved,
+                rateLimit=60,
+                slot=self.onSceneMouseMoved
+            )
+
+            self.scene_crosshair_enabled = True
+            self.crosshair = True
+
+            # Clear old labels, connect our label update
+            self.clearCurveLabels()
+            self.crosshair_position_updated.connect(self.updateLabel)
+
+        elif not is_enabled and self.scene_crosshair_enabled:
+            # Remove the lines from the scene
+            if self.scene_vline:
+                self.plotItem.scene().removeItem(self.scene_vline)
+                self.scene_vline = None
+            if self.scene_hline:
+                self.plotItem.scene().removeItem(self.scene_hline)
+                self.scene_hline = None
+
+            # Disconnect the scene proxy
+            if self.scene_crosshair_proxy:
+                self.scene_crosshair_proxy.disconnect()
+                self.scene_crosshair_proxy = None
+
+            self.scene_crosshair_enabled = False
+            self.crosshair = False
+
+            # Remove labels
+            self.clearCurveLabels()
+
+    def onSceneMouseMoved(self, event):
+        """
+        Handles scene-level mouse movement. event is typically (QPointF, native_event).
+        We compute data coords, update crosshair lines, and emit crosshair_position_updated.
+        """
+        if not self.scene_crosshair_enabled:
+            return
+
+        if isinstance(event, tuple):
+            scene_pos = event[0]  # first element is the QPointF
+        else:
+            scene_pos = event
+
+        # If outside the bounding rect, we could hide the lines or return
+        if not self.plotItem.sceneBoundingRect().contains(scene_pos):
+            return
+
+        # We want the vertical line to be at x, horizontally spanning the entire scene
+        # We want the horizontal line to be at y, spanning the entire scene
+        scene_rect = self.plotItem.scene().sceneRect()
+        left = scene_rect.left()
+        right = scene_rect.right()
+        top = scene_rect.top()
+        bottom = scene_rect.bottom()
+
+        x = scene_pos.x()
+        y = scene_pos.y()
+
+        # Update QGraphicsLineItem geometry
+        if self.scene_vline:
+            self.scene_vline.setLine(x, top, x, bottom)
+        if self.scene_hline:
+            self.scene_hline.setLine(left, y, right, y)
+
+        # Convert scene coords to data coords for the *main* viewbox
+        # (We always pick self.plotItem.getViewBox() as the reference for x).
+        data_point = self.plotItem.getViewBox().mapSceneToView(scene_pos)
+        data_x = data_point.x()
+        data_y = data_point.y()
+
+        # Emit so that updateLabel(...) can run
+        self.crosshair_position_updated.emit(data_x, data_y)
+
+    # -------------------------------------------------------------------------
+    # LABELING LOGIC
+    # -------------------------------------------------------------------------
+    def updateLabel(self, x_val: float, y_val: float):
+        """
+        Update the label for each curve based on the given x-coordinate.
+        (We receive x_val, y_val from crosshair_position_updated, but we
+         only need x_val to do the search in xData.)
+        """
+        if not np.isfinite(x_val):
+            return
+
+        # Possibly initialize all curve labels if not yet done
+        if self.init_label:
+            self.initializeCurveLabels()
+            self.init_label = False
+
+        # For each curve's label, find the nearest xData index, set text, move label
+        for curve, label in self.textItems.items():
+            xData, yData = curve.getData()
+            if xData is None or yData is None or len(xData) == 0:
+                label.setText("No data!")
+                continue
+
+            # If crosshair is outside the curve's x-range
+            if x_val < xData[0] or x_val > xData[-1]:
+                label.setText("No data!")
+                continue
+
+            # nearest index
+            idx = np.searchsorted(xData, x_val, side='right') - 1
+            idx = max(idx, 0)
+            idx = min(idx, len(yData) - 1)
+
+            real_x = xData[idx]
+            real_y = yData[idx]
+
+            if not (np.isfinite(real_x) and np.isfinite(real_y)):
+                label.setText("No data!")
+                continue
+
+            # If the curve belongs to a special axis, get that axis's ViewBox
+            if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
+                curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
+            else:
+                curve_vb = self.getViewBox()
+
+            # Ensure label is in that axis's ViewBox
+            curve_vb.addItem(label)
+
+            # Optionally, include severity or other metadata if you like
+            # For instance: (check if curve.channel.severity_slot is not None, etc.)
+            label.setText(f"x={real_x:.2f}\ny={real_y:.2f}")
+            label.setPos(real_x, real_y)
+
+    def initializeCurveLabels(self, font="Arial", font_size=8):
+        """
+        Create a TextItem for each PlotDataItem in the plot and store them in self.textItems.
+        """
+        self.clearCurveLabels()
+        self.init_label = False  # or True if you only want to do it once
+
+        for item in self.plotItem.listDataItems():
+            if not isinstance(item, PlotDataItem):
+                continue
+
+            label = TextItem(
+                text='No data',
+                color='w',
+                border=mkPen(color='w', width=2),
+                fill=mkBrush(0, 0, 0, 150)
+            )
+            label.setAnchor((0.5, 0.5))
+            label.setFont(QFont(font, font_size))
+            label.setPos(0, 0)
+
+            # Store in dict
+            self.textItems[item] = label
+
+    def clearCurveLabels(self):
+        """
+        Remove all existing curve labels from the plot and clear the textItems dict.
+        """
+        if hasattr(self, 'textItems'):
+            for label in self.textItems.values():
+                self.plotItem.removeItem(label)
+            self.textItems.clear()
+        self.init_label = True
 
 class TimeAxisItem(AxisItem):
     """
