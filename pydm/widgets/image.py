@@ -1,4 +1,3 @@
-from enum import Enum
 from qtpy.QtWidgets import QActionGroup
 from qtpy.QtCore import Signal, Slot, QTimer, QThread
 from pyqtgraph import ImageView, PlotItem
@@ -9,7 +8,6 @@ import logging
 from .channel import PyDMChannel
 from .colormaps import cmaps, cmap_names, PyDMColorMap
 from .base import PyDMWidget, PostParentClassInitSetup
-from pydm.utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
 from pydm.utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
 
 if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6:
