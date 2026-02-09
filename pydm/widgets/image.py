@@ -1,3 +1,4 @@
+from enum import Enum
 from qtpy.QtWidgets import QActionGroup
 from qtpy.QtCore import Signal, Slot, QTimer, QThread
 from pyqtgraph import ImageView, PlotItem
@@ -368,7 +369,7 @@ class PyDMImageView(ImageView, PyDMWidget):
         """
         return self._colormap
 
-    def setColorMap(self, new_cmap) -> None:
+    def _setColorMap(self, new_cmap) -> None:
         """
         Set the color map used by the ImageView.
 
@@ -385,7 +386,7 @@ class PyDMImageView(ImageView, PyDMWidget):
             else:
                 action.setChecked(False)
 
-    colorMap = Property(PyDMColorMap, readColorMap, setColorMap)
+    colorMap = Property(PyDMColorMap, readColorMap, _setColorMap)
 
     def setColorMap(self, cmap=None):
         """
