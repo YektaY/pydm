@@ -38,6 +38,7 @@ jobs:
         retention-days: 1
 
   publish:
+    needs: build
     if: ${{ github.repository == 'slaclab/pydm' }}
     name: Publish release to PyPI
     runs-on: ubuntu-latest
