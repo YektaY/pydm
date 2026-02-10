@@ -48,7 +48,7 @@ jobs:
         elif [ "$RUNNER_OS" == "macOS" ]; then
           mamba install -c conda-forge pydm pyside6 git pyca
         else
-          mamba install -c conda-forge pydm pyside6 pyca
+          mamba install -c conda-forge pydm pyside6
         fi
 
     - name: Install additional Python dependencies with pip
