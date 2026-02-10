@@ -9,7 +9,6 @@ from .channel import PyDMChannel
 from .colormaps import cmaps, cmap_names, PyDMColorMap
 from .base import PyDMWidget, PostParentClassInitSetup
 from pydm.utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
-from pydm.utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
 
 if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6:
     from PySide6.QtCore import Property
@@ -368,7 +367,7 @@ class PyDMImageView(ImageView, PyDMWidget):
         """
         return self._colormap
 
-    def setColorMap(self, new_cmap) -> None:
+    def _setColorMap(self, new_cmap) -> None:
         """
         Set the color map used by the ImageView.
 
@@ -385,7 +384,7 @@ class PyDMImageView(ImageView, PyDMWidget):
             else:
                 action.setChecked(False)
 
-    colorMap = Property(PyDMColorMap, readColorMap, setColorMap)
+    colorMap = Property(PyDMColorMap, readColorMap, _setColorMap)
 
     def setColorMap(self, cmap=None):
         """
