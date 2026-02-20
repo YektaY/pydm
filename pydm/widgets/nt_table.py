@@ -101,7 +101,7 @@ class PythonTableModel(QtCore.QAbstractTableModel):
 
     def sort(self, col, order=QtCore.Qt.AscendingOrder):
         self.layoutAboutToBeChanged.emit()
-        sort_reversed = order == QtCore.Qt.AscendingOrder
+        sort_reversed = order == QtCore.Qt.AscendingOrder or order == 0
         self._list.sort(key=itemgetter(col), reverse=sort_reversed)
         self.layoutChanged.emit()
 

@@ -310,7 +310,10 @@ class BasePlotCurveItem(PlotDataItem):
         -------
         new_style: Qt.PenStyle
         """
-        if new_style in self.lines.values():
+        valid_styles = set(self.lines.values())
+        if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6 and isinstance(new_style, int):
+            new_style = Qt.PenStyle(new_style)
+        if new_style in valid_styles:
             self._pen.setStyle(new_style)
             self.setPen(self._pen)
 
