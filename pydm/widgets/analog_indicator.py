@@ -64,7 +64,7 @@ class QScaleAlarmed(QScale):
         # We originally used QWIDGETSIZE_MAX here but the macro is only defined in PyQt and not PySide.
         # Instead we use it's direct value from the docs: https://doc.qt.io/qt-6/qwidget.html#QWIDGETSIZE_MAX
         self.setMaximumSize(16777215, 16777215)  # Unset fixed size
-        if self._orientation == Qt.Horizontal:
+        if self._orientation == Qt.Horizontal or self._orientation == 1:
             self._widget_width = self.width()
             self._widget_height = self.height()
             self._painter_translation_y = 0
@@ -72,7 +72,7 @@ class QScaleAlarmed(QScale):
             # expands scale in horizontal position
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             self.setFixedHeight(self._scale_height)
-        elif self._orientation == Qt.Vertical:
+        elif self._orientation == Qt.Vertical or self._orientation == 2:
             # Invert dimensions for paintEvent()
             self._widget_width = self.height()
             self._widget_height = self.width()

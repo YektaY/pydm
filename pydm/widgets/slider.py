@@ -542,12 +542,12 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
         new_orientation : Qt.Orientation
             Qt.Horizontal or Qt.Vertical
         """
-        if new_orientation not in (Qt.Horizontal, Qt.Vertical):
+        if new_orientation not in (Qt.Horizontal, Qt.Vertical, 1, 2):
             logger.error("Invalid orientation '{0}'. The existing layout will not change.".format(new_orientation))
             return
 
         layout = None
-        if new_orientation == Qt.Horizontal:
+        if new_orientation == Qt.Horizontal or new_orientation == 1:
             layout = QVBoxLayout()
             layout.setContentsMargins(4, 0, 4, 4)
             label_layout = QHBoxLayout()
@@ -559,7 +559,7 @@ class PyDMSlider(QFrame, TextFormatter, PyDMWritableWidget):
             layout.addLayout(label_layout)
             self._slider.setOrientation(new_orientation)
             layout.addWidget(self._slider)
-        elif new_orientation == Qt.Vertical:
+        elif new_orientation == Qt.Vertical or new_orientation == 2:
             layout = QHBoxLayout()
             layout.setContentsMargins(0, 4, 4, 4)
             label_layout = QVBoxLayout()

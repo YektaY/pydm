@@ -210,7 +210,8 @@ class PyDMByteIndicator(QWidget, PyDMWidget):
         # This is a horrendous mess of if statements
         # for every possible case.  Ugh.
         # There is probably a more clever way to do this.
-        if self.orientation == Qt.Vertical:
+        orient = self.orientation
+        if orient == Qt.Vertical or orient == 2:
             for i, (label, indicator) in enumerate(pairs):
                 if self.labelPosition == QTabWidget.East:
                     self.layout().addWidget(indicator, i, 0)
@@ -224,7 +225,7 @@ class PyDMByteIndicator(QWidget, PyDMWidget):
                     self.layout().addWidget(indicator, i, 0)
                     # Invalid combo of orientation and label position,
                     # so we don't reset label visibility here.
-        elif self.orientation == Qt.Horizontal:
+        elif orient == Qt.Horizontal or orient == 1:
             for i, (label, indicator) in enumerate(pairs):
                 if self.labelPosition == QTabWidget.North:
                     self.layout().addWidget(label, 0, i, 1, 1, Qt.AlignHCenter)
@@ -533,10 +534,10 @@ class PyDMByteIndicator(QWidget, PyDMWidget):
 
         self.layout().setContentsMargins(0, 0, 0, 0)
 
-        if self._orientation == Qt.Horizontal:
+        if self._orientation == Qt.Horizontal or self._orientation == 1:
             self.layout().setHorizontalSpacing(indicator_spacing)
             self.layout().setVerticalSpacing(label_spacing)
-        elif self._orientation == Qt.Vertical:
+        elif self._orientation == Qt.Vertical or self._orientation == 2:
             self.layout().setHorizontalSpacing(label_spacing)
             self.layout().setVerticalSpacing(indicator_spacing)
 
@@ -586,14 +587,11 @@ class PyDMByteIndicator(QWidget, PyDMWidget):
         """
         self._big_endian = is_big_endian
 
-        origin_map = {
-            (Qt.Vertical, True): Qt.BottomLeftCorner,
-            (Qt.Vertical, False): Qt.TopLeftCorner,
-            (Qt.Horizontal, True): Qt.TopRightCorner,
-            (Qt.Horizontal, False): Qt.TopLeftCorner,
-        }
-
-        origin = origin_map[(self.orientation, self.bigEndian)]
+        orient = self.orientation
+        if orient == Qt.Vertical or orient == 2:
+            origin = Qt.BottomLeftCorner if self.bigEndian else Qt.TopLeftCorner
+        else:
+            origin = Qt.TopRightCorner if self.bigEndian else Qt.TopLeftCorner
         self.layout().setOriginCorner(origin)
         self.rebuild_layout()
 

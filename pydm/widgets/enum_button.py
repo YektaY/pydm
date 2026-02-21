@@ -487,9 +487,13 @@ class PyDMEnumButton(QWidget, PyDMWritableWidget):
                         len(self._widgets) - 1,
                     )
                 continue
-            if self.orientation == Qt.Vertical:
+            # Compare with both enum and int values because PySide6 scoped
+            # enums don't compare equal to plain ints, and .ui loading via
+            # pyside6-uic passes raw int values through setProperty().
+            orient = self.orientation
+            if orient == Qt.Vertical or orient == 2:
                 self.layout().addWidget(widget, i, 0)
-            elif self.orientation == Qt.Horizontal:
+            elif orient == Qt.Horizontal or orient == 1:
                 self.layout().addWidget(widget, 0, i)
 
     def check_enable_state(self):

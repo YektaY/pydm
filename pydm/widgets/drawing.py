@@ -351,8 +351,8 @@ class PyDMDrawing(QWidget, PyDMWidget):
             Index at Qt.PenStyle enum or int
         """
         # pyside6 enums are more strict and will error if passed int
-        # if isinstance(new_style, int):
-        #    new_style = Qt.PenStyle(new_style)
+        if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6 and isinstance(new_style, int):
+            new_style = Qt.PenCapStyle(new_style)
         if new_style != self._pen_cap_style:
             self._pen_cap_style = new_style
             self._pen.setCapStyle(new_style)
@@ -381,6 +381,9 @@ class PyDMDrawing(QWidget, PyDMWidget):
         new_style : int
             Index at Qt.PenStyle enum or int
         """
+        # pyside6 enums are more strict and will error if passed int
+        if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6 and isinstance(new_style, int):
+            new_style = Qt.PenJoinStyle(new_style)
         if new_style != self._pen_join_style:
             self._pen_join_style = new_style
             self._pen.setJoinStyle(new_style)

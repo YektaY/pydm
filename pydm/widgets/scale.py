@@ -73,14 +73,14 @@ class QScale(QFrame):
         # We originally used QWIDGETSIZE_MAX here but the macro is only defined in PyQt and not PySide.
         # Instead we use it's direct value from the docs: https://doc.qt.io/qt-6/qwidget.html#QWIDGETSIZE_MAX
         self.setMaximumSize(16777215, 16777215)  # Unset fixed size
-        if self._orientation == Qt.Horizontal:
+        if self._orientation == Qt.Horizontal or self._orientation == 1:
             self._widget_width = self.width()
             self._widget_height = self.height()
             self._painter_translation_y = 0
             self._painter_rotation = 0
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             self.setFixedHeight(self._scale_height)
-        elif self._orientation == Qt.Vertical:
+        elif self._orientation == Qt.Vertical or self._orientation == 2:
             # Invert dimensions for paintEvent()
             self._widget_width = self.height()
             self._widget_height = self.width()
@@ -491,7 +491,7 @@ class PyDMScaleIndicator(QFrame, TextFormatter, PyDMWidget):
         """
         self.limits_layout = None
         self.widget_layout = None
-        if new_orientation == Qt.Horizontal:
+        if new_orientation == Qt.Horizontal or new_orientation == 1:
             self.limits_layout = QHBoxLayout()
             if not inverted:
                 self.limits_layout.addWidget(self.lower_label)
@@ -550,7 +550,7 @@ class PyDMScaleIndicator(QFrame, TextFormatter, PyDMWidget):
                     self.lower_label.setAlignment(Qt.AlignBottom | Qt.AlignRight)
                     self.upper_label.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
 
-        elif new_orientation == Qt.Vertical:
+        elif new_orientation == Qt.Vertical or new_orientation == 2:
             self.limits_layout = QVBoxLayout()
             if (value_position == Qt.RightEdge and not flipped) or (value_position == Qt.LeftEdge and flipped):
                 add_value_between_limits = True
