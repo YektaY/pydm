@@ -7,10 +7,10 @@ from qtpy.QtCore import Slot, Property, Qt
 from .baseplot import BasePlot, NoDataError, BasePlotCurveItem
 from .channel import PyDMChannel
 from pydm.utilities import remove_protocol
+from pydm.utilities.ring_buffer import RingBuffer, MINIMUM_BUFFER_SIZE
 
 
 DEFAULT_BUFFER_SIZE = 1200
-MINIMUM_BUFFER_SIZE = 2
 
 
 class ScatterPlotCurveItem(BasePlotCurveItem):
@@ -35,8 +35,7 @@ class ScatterPlotCurveItem(BasePlotCurveItem):
         self.bufferSizeChannel = None
         self.bufferSizeChannel_connected = False
         self._bufferSize = DEFAULT_BUFFER_SIZE
-        self.data_buffer = np.zeros((2, self._bufferSize), order="f", dtype=float)
-        self.points_accumulated = 0
+        self._ring_buffer = RingBuffer(2, self._bufferSize)
         self.latest_x_value = None
         self.latest_y_value = None
         self.needs_new_x = True
@@ -199,18 +198,33 @@ class ScatterPlotCurveItem(BasePlotCurveItem):
             if self.needs_new_y or self.needs_new_x:
                 return
         # If you get this far, we are OK to add the latest data to the buffer.
-        self.data_buffer = np.roll(self.data_buffer, -1)
-        self.data_buffer[0, -1] = self.latest_x_value
-        self.data_buffer[1, -1] = self.latest_y_value
-        if self.points_accumulated < self._bufferSize:
-            self.points_accumulated = self.points_accumulated + 1
+        self._ring_buffer.append(self.latest_x_value, self.latest_y_value)
         self.needs_new_x = True
         self.needs_new_y = True
         self.data_changed.emit()
 
+    @property
+    def points_accumulated(self):
+        return self._ring_buffer.count
+
+    @points_accumulated.setter
+    def points_accumulated(self, value):
+        self._ring_buffer.count = value
+
+    @property
+    def data_buffer(self):
+        return self._ring_buffer.get_padded_data()
+
+    @data_buffer.setter
+    def data_buffer(self, value):
+        count = self._ring_buffer._count
+        if 0 < count < value.shape[1]:
+            self._ring_buffer.load_from_array(value[:, -count:])
+        else:
+            self._ring_buffer.load_from_array(value)
+
     def initialize_buffer(self):
-        self.points_accumulated = 0
-        self.data_buffer = np.zeros((2, self._bufferSize), order="f", dtype=float)
+        self._ring_buffer = RingBuffer(2, self._bufferSize)
 
     def getBufferSize(self):
         return int(self._bufferSize)
@@ -285,9 +299,10 @@ class ScatterPlotCurveItem(BasePlotCurveItem):
         Called by the curve's parent plot whenever the curve needs to be
         re-drawn with new data.
         """
+        data = self._ring_buffer.get_ordered_data()
         self.setData(
-            x=self.data_buffer[0, -self.points_accumulated :].astype(float),
-            y=self.data_buffer[1, -self.points_accumulated :].astype(float),
+            x=data[0].astype(float),
+            y=data[1].astype(float),
         )
 
     def limits(self):
@@ -299,10 +314,11 @@ class ScatterPlotCurveItem(BasePlotCurveItem):
         tuple
             A nested tuple of limits: ((xmin, xmax), (ymin, ymax))
         """
-        if self.points_accumulated == 0:
+        if self._ring_buffer.count == 0:
             raise NoDataError("Curve has no data, cannot determine limits.")
-        x_data = self.data_buffer[0, -self.points_accumulated :]
-        y_data = self.data_buffer[1, -self.points_accumulated :]
+        data = self._ring_buffer.get_ordered_data()
+        x_data = data[0]
+        y_data = data[1]
         return ((float(np.amin(x_data)), float(np.amax(x_data))), (float(np.amin(y_data)), float(np.amax(y_data))))
 
     def channels(self):

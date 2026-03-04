@@ -23,6 +23,7 @@ from .connection import close_widget_connections, establish_widget_connections
 from .iconfont import IconFont
 from .remove_protocol import protocol_and_address, remove_protocol, parsed_address
 from .units import convert, find_unit_options, find_unittype
+from .ring_buffer import RingBuffer
 
 __all__ = [
     "colors",
@@ -38,6 +39,7 @@ __all__ = [
     "convert",
     "find_unit_options",
     "find_unittype",
+    "RingBuffer",
 ]
 
 logger = logging.getLogger(__name__)

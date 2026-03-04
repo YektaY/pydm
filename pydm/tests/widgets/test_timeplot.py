@@ -278,12 +278,12 @@ def test_timeplotcurve_get_set_reset_buffer_size(qtbot, new_buffer_size, expecte
 def test_timeplotcurve_max_x(qtbot):
     pydm_timeplot_curve_item = TimePlotCurveItem()
 
-    pydm_timeplot_curve_item.data_buffer[0, pydm_timeplot_curve_item._bufferSize - 1] = -1
-    pydm_timeplot_curve_item.data_buffer[1, pydm_timeplot_curve_item._bufferSize - 1] = 100
+    # Use the ring buffer's append to insert data
+    pydm_timeplot_curve_item._ring_buffer.append(-1, 100)
 
     max_value = pydm_timeplot_curve_item.max_x()
-    assert max_value == pydm_timeplot_curve_item.data_buffer[0, pydm_timeplot_curve_item._bufferSize - 1]
-    assert pydm_timeplot_curve_item.data_buffer[1, pydm_timeplot_curve_item._bufferSize - 1] == 100
+    assert max_value == -1
+    assert pydm_timeplot_curve_item._ring_buffer.get_newest(row=1) == 100
 
 
 def test_timeaxisitem_tickstrings():

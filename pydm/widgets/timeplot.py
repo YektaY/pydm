@@ -9,6 +9,7 @@ from qtpy.QtCore import Signal, Slot, QTimer
 from .baseplot import BasePlot, BasePlotCurveItem
 from .channel import PyDMChannel
 from pydm.utilities import remove_protocol, ACTIVE_QT_WRAPPER, QtWrapperTypes
+from pydm.utilities.ring_buffer import RingBuffer
 from datetime import datetime
 from pydm.utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
 
@@ -119,9 +120,8 @@ class TimePlotCurveItem(BasePlotCurveItem):
         self._min_y_value = None
         self._max_y_value = None
 
-        self.data_buffer = np.zeros((2, self._bufferSize), order="f", dtype=float)
+        self._ring_buffer = RingBuffer(2, self._bufferSize)
         self.connected = False
-        self.points_accumulated = 0
         self.latest_value = None
         self.channel = None
         self.units = ""
@@ -272,14 +272,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
         self.update_min_max_y_values(new_value)
 
         if self._update_mode == PyDMTimePlot.OnValueChange:
-            self.data_buffer = np.roll(self.data_buffer, -1)
-            # The first array row is to record timestamps, when a new value arrives.
-            self.data_buffer[0, self._bufferSize - 1] = time.time()
-            # The second array row is to record the actual values.
-            self.data_buffer[1, self._bufferSize - 1] = new_value
-
-            if self.points_accumulated < self._bufferSize:
-                self.points_accumulated += 1
+            self._ring_buffer.append(time.time(), new_value)
             self.data_changed.emit()
         elif self._update_mode == PyDMTimePlot.AtFixedRate:
             self.latest_value = new_value
@@ -293,11 +286,7 @@ class TimePlotCurveItem(BasePlotCurveItem):
         """
         if self._update_mode != PyDMTimePlot.AtFixedRate:
             return
-        self.data_buffer = np.roll(self.data_buffer, -1)
-        self.data_buffer[0, self._bufferSize - 1] = time.time()
-        self.data_buffer[1, self._bufferSize - 1] = self.latest_value
-        if self.points_accumulated < self._bufferSize:
-            self.points_accumulated = self.points_accumulated + 1
+        self._ring_buffer.append(time.time(), self.latest_value)
         self.data_changed.emit()
 
     def update_min_max_y_values(self, new_value):
@@ -317,16 +306,32 @@ class TimePlotCurveItem(BasePlotCurveItem):
         elif self._max_y_value < new_value:
             self._max_y_value = new_value
 
+    @property
+    def points_accumulated(self):
+        return self._ring_buffer.count
+
+    @points_accumulated.setter
+    def points_accumulated(self, value):
+        self._ring_buffer.count = value
+
+    @property
+    def data_buffer(self):
+        return self._ring_buffer.get_padded_data()
+
+    @data_buffer.setter
+    def data_buffer(self, value):
+        count = self._ring_buffer._count
+        if 0 < count < value.shape[1]:
+            # Padded format (zeros + right-aligned data): only load the valid portion
+            self._ring_buffer.load_from_array(value[:, -count:])
+        else:
+            self._ring_buffer.load_from_array(value)
+
     def initialize_buffer(self):
         """
         Initialize the data buffer used to plot the current curve.
         """
-        self.points_accumulated = 0
-
-        # If you don't specify dtype=float, you don't have enough
-        # resolution for the timestamp data.
-        self.data_buffer = np.zeros((2, self._bufferSize), order="f", dtype=float)
-        self.data_buffer[0].fill(time.time())
+        self._ring_buffer = RingBuffer(2, self._bufferSize)
 
     def getBufferSize(self):
         return int(self._bufferSize)
@@ -354,25 +359,28 @@ class TimePlotCurveItem(BasePlotCurveItem):
            A numpy array of shape (2, length_of_data). Index 0 contains
            timestamps and index 1 contains the data observations.
         """
+        # Extract ordered data from ring buffer, do numpy manipulation, then load back
+        buf = self._ring_buffer.get_padded_data()
         live_data_length = len(data[0])
         min_x = data[0][0]
         max_x = data[0][live_data_length - 1]
         # Get the indices between which we want to insert the data
-        min_insertion_index = np.searchsorted(self.data_buffer[0], min_x)
-        max_insertion_index = np.searchsorted(self.data_buffer[0], max_x)
+        min_insertion_index = np.searchsorted(buf[0], min_x)
+        max_insertion_index = np.searchsorted(buf[0], max_x)
         # Delete any non-raw data between the indices so we don't have multiple data points for the same timestamp
-        self.data_buffer = np.delete(self.data_buffer, slice(min_insertion_index, max_insertion_index), axis=1)
+        buf = np.delete(buf, slice(min_insertion_index, max_insertion_index), axis=1)
         num_points_deleted = max_insertion_index - min_insertion_index
         delta_points = live_data_length - num_points_deleted
         if live_data_length > num_points_deleted:
             # If the insertion will overflow the data buffer, need to delete the oldest points
-            self.data_buffer = np.delete(self.data_buffer, slice(0, delta_points), axis=1)
+            buf = np.delete(buf, slice(0, delta_points), axis=1)
         else:
-            self.data_buffer = np.insert(self.data_buffer, [0], np.zeros((2, delta_points)), axis=1)
-        min_insertion_index = np.searchsorted(self.data_buffer[0], min_x)
-        self.data_buffer = np.insert(self.data_buffer, [min_insertion_index], data[0:2], axis=1)
+            buf = np.insert(buf, [0], np.zeros((2, delta_points)), axis=1)
+        min_insertion_index = np.searchsorted(buf[0], min_x)
+        buf = np.insert(buf, [min_insertion_index], data[0:2], axis=1)
 
-        self.points_accumulated += live_data_length - num_points_deleted
+        self._ring_buffer.load_from_array(buf)
+        self._ring_buffer.count = self._ring_buffer.count + live_data_length - num_points_deleted
 
     @Slot()
     def redrawCurve(self, min_x: Optional[float] = None, max_x: Optional[float] = None):
@@ -393,8 +401,9 @@ class TimePlotCurveItem(BasePlotCurveItem):
             The maximum timestamp to render when plotting as a bar graph.
         """
         try:
-            x = self.data_buffer[0, -self.points_accumulated :].astype(float)
-            y = self.data_buffer[1, -self.points_accumulated :].astype(float)
+            data = self._ring_buffer.get_ordered_data()
+            x = data[0].astype(float)
+            y = data[1].astype(float)
 
             if not self._plot_by_timestamps:
                 x -= time.time()
@@ -449,9 +458,10 @@ class TimePlotCurveItem(BasePlotCurveItem):
         Returns
         -------
         float
-            The timestamp of the most recent data point recorded into the data buffer.
+            The timestamp of the oldest data point recorded into the data buffer.
         """
-        return self.data_buffer[0, -self.points_accumulated]
+        oldest = self._ring_buffer.get_oldest(row=0)
+        return oldest if oldest is not None else 0.0
 
     def max_x(self):
         """
@@ -463,7 +473,8 @@ class TimePlotCurveItem(BasePlotCurveItem):
         float
             The timestamp of the most recent data point recorded into the data buffer.
         """
-        return self.data_buffer[0, -1]
+        newest = self._ring_buffer.get_newest(row=0)
+        return newest if newest is not None else 0.0
 
     def channels(self):
         return [self.channel]
