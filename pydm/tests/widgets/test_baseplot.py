@@ -348,11 +348,20 @@ class DummyViewBox:
     a dummy point whose x() value we control.
     """
 
-    def __init__(self, mapped_x=0):
+    def __init__(self, mapped_x=0, view_range=None):
         self.mapped_x = mapped_x
+        self.addedItems = []
+        self._view_range = view_range if view_range is not None else [[0, 10], [0, 100]]
 
     def addItem(self, item):
-        pass
+        self.addedItems.append(item)
+
+    def removeItem(self, item):
+        if item in self.addedItems:
+            self.addedItems.remove(item)
+
+    def viewRange(self):
+        return self._view_range
 
     def mapSceneToView(self, point):
         dummy = MagicMock()
@@ -391,7 +400,9 @@ class DummyPlotItem:
 class DummyWidget:
     def __init__(self):
         self.textItems = {}  # Maps curves to labels.
+        self.markerItems = {}
         self.init_label = False
+        self.crosshair = True
         self.plotItem = DummyPlotItem()
 
     def clearCurveLabels(self) -> None:
@@ -402,7 +413,9 @@ class DummyWidget:
             for label in list(self.textItems.values()):
                 self.plotItem.removeItem(label)
             self.textItems.clear()
-            self.init_label = True
+        if hasattr(self, "markerItems"):
+            self.markerItems.clear()
+        self.init_label = True
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
@@ -418,7 +431,7 @@ class DummyWidget:
             label = DummyTextItem(text="No data", color="w", border="dummy_pen", fill="dummy_brush")
 
             label.setPos(0, 0)
-            label.setAnchor((0.5, 0.5))
+            label.setAnchor((0.5, 1.0))
             label.setFont(QFont(font, font_size))
 
             self.textItems[item] = label
@@ -433,6 +446,9 @@ class DummyWidget:
         """
         Update the label for each curve based on the scene coordinates.
         """
+        if not self.crosshair:
+            return
+
         if self.init_label:
             self.initializeCurveLabels()
             self.init_label = False
@@ -443,7 +459,8 @@ class DummyWidget:
             else:
                 curve_vb = self.getViewBox()
 
-            curve_vb.addItem(label)
+            if label not in curve_vb.addedItems:
+                curve_vb.addItem(label)
             mouse_point_in_curve_vb = curve_vb.mapSceneToView(QPointF(scene_x, scene_y))
             x_val = mouse_point_in_curve_vb.x()
 
@@ -474,7 +491,11 @@ class DummyWidget:
             x_str = f"{real_x:.2f}"
             y_str = f"{real_y:.2f}"
             label.setText(f"x={x_str}\ny={y_str}")
-            label.setPos(x_val, real_y)
+
+            view_range = curve_vb.viewRange()
+            y_range = view_range[1][1] - view_range[1][0]
+            y_offset = y_range * 0.05
+            label.setPos(x_val, real_y + y_offset)
 
     def getFormattedX(self, real_x: float) -> str:
         """
@@ -501,7 +522,7 @@ def test_initializeCurveLabels():
 
     label = widget.textItems[valid_item]
     assert label._pos == (0, 0)
-    assert label._anchor == (0.5, 0.5)
+    assert label._anchor == (0.5, 1.0)
     assert isinstance(label._font, QFont)
     assert label._font.family() == "Times"
     assert label._font.pointSize() == 10
@@ -550,8 +571,9 @@ def test_updateLabel_valid():
 
     # For x_val = 2.3, np.searchsorted([0,1,2,3], 2.3, side="right") returns 3;
     # subtracting 1 gives index 2. Thus, real_x should be 2 and real_y should be 30.
+    # Label is offset above by 5% of y-range (default view_range [0,100] -> offset=5).
     expected_text = "x=2.00\ny=30.00"
-    expected_pos = (2.3, 30)
+    expected_pos = (2.3, 35.0)
     assert label._text == expected_text
     assert label._pos == expected_pos
     assert label.visible is True
@@ -576,6 +598,32 @@ def test_updateLabel_invalid_data():
     widget.updateLabel(100.0, 200.0)
     # Since the data arrays are empty, the label should be hidden.
     assert label.visible is False
+
+
+def test_updateLabel_crosshair_disabled():
+    """
+    Test that updateLabel is a no-op when crosshair is disabled.
+    """
+    widget = DummyWidget()
+    widget.crosshair = False
+    widget.init_label = False
+
+    class DummyCurve:
+        def __init__(self, xData, yData):
+            self._xData = xData
+            self._yData = yData
+
+        def getData(self):
+            return self._xData, self._yData
+
+    curve = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
+    label = DummyTextItem("No data", "w", "dummy_pen", "dummy_brush")
+    widget.textItems = {curve: label}
+
+    widget.updateLabel(100.0, 200.0)
+    # Label should remain unchanged since crosshair is disabled.
+    assert label._text == "No data"
+    assert label._pos is None
 
 
 def test_getFormattedX():

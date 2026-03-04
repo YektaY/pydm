@@ -12,6 +12,7 @@ from pyqtgraph import (
     AxisItem,
     PlotWidget,
     PlotDataItem,
+    ScatterPlotItem,
     mkPen,
     ViewBox,
     InfiniteLine,
@@ -775,6 +776,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         self.crosshair_movement_proxy = None
 
         self.textItems = {}
+        self.markerItems = {}
         self.crosshair = False
         self.init_labels = False
 
@@ -828,6 +830,9 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             if event.type() == QEvent.Leave:
                 for label in self.textItems.values():
                     label.hide()
+                if hasattr(self, "markerItems"):
+                    for marker in self.markerItems.values():
+                        marker.hide()
 
         return ret
 
@@ -1603,12 +1608,15 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
             self.crosshair = True
             self.textItems = {}
+            self.markerItems = {}
             self.init_label = True
             self.crosshair_position_updated.connect(self.updateLabel)
 
             self.installEventFilter(self)
 
         else:
+            self.crosshair = False
+
             self.clearCurveLabels()
             self.init_label = False
 
@@ -1632,7 +1640,6 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                     pass
 
             self.removeEventFilter(self)
-            self.crosshair = False
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
@@ -1644,6 +1651,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         """
         if not hasattr(self, "textItems"):
             self.textItems = {}
+        if not hasattr(self, "markerItems"):
+            self.markerItems = {}
 
         for item in self.plotItem.listDataItems():
             if not isinstance(item, PlotDataItem):
@@ -1655,10 +1664,25 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                 )
 
                 label.setPos(0, 0)
-                label.setAnchor((0.5, 0.5))
+                label.setAnchor((0.5, 1.0))
                 label.setFont(QFont(font, font_size))
 
                 self.textItems[item] = label
+
+            if item not in self.markerItems:
+                curve_pen = item.opts.get("pen", mkPen("w"))
+                if hasattr(curve_pen, "color"):
+                    marker_color = curve_pen.color()
+                else:
+                    marker_color = mkPen(curve_pen).color()
+                marker = ScatterPlotItem(
+                    size=10,
+                    pen=mkPen(color=marker_color, width=2),
+                    brush=mkBrush(0, 0, 0, 0),
+                    symbol="o",
+                )
+                marker.setZValue(1000)
+                self.markerItems[item] = marker
 
         self.init_label = False
 
@@ -1686,7 +1710,21 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                     self.getViewBox().removeItem(label)
 
             self.textItems.clear()
-            self.init_label = True
+
+        if hasattr(self, "markerItems"):
+            for curve, marker in self.markerItems.items():
+                marker.hide()
+
+                if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
+                    curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
+                    if marker in curve_vb.addedItems:
+                        curve_vb.removeItem(marker)
+                elif marker in self.getViewBox().addedItems:
+                    self.getViewBox().removeItem(marker)
+
+            self.markerItems.clear()
+
+        self.init_label = True
 
     @Slot(float, float)
     def updateLabel(self, scene_x: float, scene_y: float) -> None:
@@ -1711,12 +1749,19 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         -------
         None
         """
+        if not self.crosshair:
+            return
+
         if self.init_label or len(self.plotItem.listDataItems()) != len(self.textItems):
             self.initializeCurveLabels()
 
         for curve, label in self.textItems.items():
+            marker = self.markerItems.get(curve)
+
             if not curve.isVisible():
                 label.hide()
+                if marker is not None:
+                    marker.hide()
                 continue
 
             if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
@@ -1724,7 +1769,10 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             else:
                 curve_vb = self.getViewBox()
 
-            curve_vb.addItem(label)
+            if label not in curve_vb.addedItems:
+                curve_vb.addItem(label)
+            if marker is not None and marker not in curve_vb.addedItems:
+                curve_vb.addItem(marker)
 
             mouse_point_in_curve_vb = curve_vb.mapSceneToView(QPointF(scene_x, scene_y))
             x_val = mouse_point_in_curve_vb.x()
@@ -1739,6 +1787,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                 or x_val > xData[-1]
             ):
                 label.hide()
+                if marker is not None:
+                    marker.hide()
                 continue
 
             label.show()
@@ -1750,6 +1800,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
             if not (np.isfinite(real_x) and np.isfinite(real_y)):
                 label.hide()
+                if marker is not None:
+                    marker.hide()
                 continue
             else:
                 label.show()
@@ -1757,7 +1809,16 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             x_str = self.getFormattedX(real_x)
             y_str = self.getFormattedY(real_y)
             label.setText(f"x={x_str}\ny={y_str}")
-            label.setPos(x_val, real_y)
+
+            # Offset label above the data point so it's not obscured by the crosshair and cursor
+            view_range = curve_vb.viewRange()
+            y_range = view_range[1][1] - view_range[1][0]
+            y_offset = y_range * 0.05
+            label.setPos(x_val, real_y + y_offset)
+
+            if marker is not None:
+                marker.setData([real_x], [real_y])
+                marker.show()
 
     def getFormattedX(self, real_x: float) -> str:
         """
