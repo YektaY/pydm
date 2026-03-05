@@ -22,6 +22,7 @@ from . import colors, macro, shortcuts
 from .connection import close_widget_connections, establish_widget_connections
 from .iconfont import IconFont
 from .remove_protocol import protocol_and_address, remove_protocol, parsed_address
+from .safe_eval import SafeExpressionEvaluator, UnsafeExpressionError
 from .units import convert, find_unit_options, find_unittype
 
 __all__ = [
@@ -38,6 +39,8 @@ __all__ = [
     "convert",
     "find_unit_options",
     "find_unittype",
+    "SafeExpressionEvaluator",
+    "UnsafeExpressionError",
 ]
 
 logger = logging.getLogger(__name__)

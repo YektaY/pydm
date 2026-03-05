@@ -1,9 +1,11 @@
+import warnings
 import numpy as np
 import pytest
 from qtpy.QtCore import Slot
 
 from pydm.tests.conftest import ConnectionSignals
 from pydm.widgets.archiver_time_plot import ArchivePlotCurveItem, PyDMArchiverTimePlot, FormulaCurveItem
+from pydm.utilities.safe_eval import MAX_DEPENDENCY_DEPTH
 
 
 @pytest.mark.parametrize("address", ["ca://LINAC:PV1", "pva://LINAC:PV1", "LINAC:PV1"])
@@ -152,38 +154,295 @@ def test_request_data_from_archiver(qtbot):
     assert inspect_data_request.max_x == 299
 
 
-def test_formula_curve_item():
-    # Create two ArchivePlotCurveItems which we will make a few formulas out of
-    # Assume the curves have live and archive connections
-    curve_item1 = ArchivePlotCurveItem()
-    curve_item1.archive_data_buffer = np.array([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]], dtype=float)
-    curve_item1.archive_points_accumulated = 6
-    curve_item1.connected = True
-    curve_item1.arch_connected = True
+# ------------------------------------------------------------------ #
+#  Computed ArchivePlotCurveItem (formula) tests                       #
+# ------------------------------------------------------------------ #
 
-    curve_item2 = ArchivePlotCurveItem()
-    curve_item2.archive_data_buffer = np.array([[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float)
-    curve_item2.archive_points_accumulated = 6
-    curve_item2.connected = True
-    curve_item2.arch_connected = True
 
-    # Dictionary of PVS
-    curves1 = dict()
-    curves1["A"] = curve_item1
-    curves2 = dict()
-    curves2["A"] = curve_item1
-    curves2["B"] = curve_item2
+def _make_connected_curve(archive_data, archive_points=None):
+    """Helper to create a connected ArchivePlotCurveItem with archive data."""
+    curve = ArchivePlotCurveItem()
+    curve.archive_data_buffer = np.array(archive_data, dtype=float)
+    curve.archive_points_accumulated = archive_points if archive_points is not None else len(archive_data[0])
+    curve.connected = True
+    curve.arch_connected = True
+    return curve
 
-    formula1 = r"f://5*{A}"
-    formula2 = r"f://log({A})"
-    formula3 = r"f://{A}+{B}"
-    formula4 = r"f://{A}*{B}"
 
-    # Create the curves with the correct inputs
-    formula_curve_1 = FormulaCurveItem(formula=formula1, pvs=curves1)
-    formula_curve_2 = FormulaCurveItem(formula=formula2, pvs=curves1)
-    formula_curve_3 = FormulaCurveItem(formula=formula3, pvs=curves2)
-    formula_curve_4 = FormulaCurveItem(formula=formula4, pvs=curves2)
+def test_computed_curve_is_computed():
+    """Verify is_computed returns True for formula curves and False for normal curves."""
+    normal = ArchivePlotCurveItem()
+    assert normal.is_computed is False
+
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+    assert computed.is_computed is True
+
+
+def test_computed_curve_no_channel():
+    """Verify computed curves do not create archiver channels."""
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+    channels = computed.channels()
+    assert channels == [None]
+
+
+def test_computed_curve_formula_property():
+    """Verify the formula property returns the original formula string."""
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+    assert computed.formula == r"f://5*{A}"
+
+
+def test_computed_curve_evaluate_multiplication():
+    """Test a simple multiplication formula: 5*A."""
+    curve1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+    computed.evaluate()
+
+    expected = np.array([[100, 105, 110, 115, 120, 125], [10, 15, 20, 25, 30, 35]], dtype=float)
+    assert np.array_equal(computed.archive_data_buffer, expected)
+
+
+def test_computed_curve_evaluate_log():
+    """Test a log formula: log(A)."""
+    curve1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+
+    computed = ArchivePlotCurveItem(formula=r"f://log({A})", pvs={"A": curve1})
+    computed.evaluate()
+
+    expected = np.array([[100, 105, 110, 115, 120, 125], np.log([2, 3, 4, 5, 6, 7])], dtype=float)
+    assert np.array_equal(computed.archive_data_buffer, expected)
+
+
+def test_computed_curve_evaluate_addition_two_pvs():
+    """Test adding two PVs: A + B with different timestamp grids."""
+    curve1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+    curve2 = _make_connected_curve([[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]])
+
+    computed = ArchivePlotCurveItem(formula=r"f://{A}+{B}", pvs={"A": curve1, "B": curve2})
+    computed.evaluate()
+
+    expected = np.array(
+        [[101, 105, 106, 110, 111, 115, 116, 120, 121, 125], [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]], dtype=float
+    )
+    assert np.array_equal(computed.archive_data_buffer, expected)
+
+
+def test_computed_curve_evaluate_multiplication_two_pvs():
+    """Test multiplying two PVs: A * B with different timestamp grids."""
+    curve1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+    curve2 = _make_connected_curve([[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]])
+
+    computed = ArchivePlotCurveItem(formula=r"f://{A}*{B}", pvs={"A": curve1, "B": curve2})
+    computed.evaluate()
+
+    expected = np.array(
+        [[101, 105, 106, 110, 111, 115, 116, 120, 121, 125], [2, 3, 6, 8, 12, 15, 20, 24, 30, 35]], dtype=float
+    )
+    assert np.array_equal(computed.archive_data_buffer, expected)
+
+
+def test_computed_curve_safe_eval_blocks_dangerous():
+    """Verify that dangerous expressions raise errors instead of executing."""
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+
+    # __import__ should be blocked by SafeExpressionEvaluator
+    computed = ArchivePlotCurveItem(formula=r"f://__import__('os')", pvs={"A": curve1})
+    # The evaluation should fail safely — the formula_invalid_signal should be emitted
+    # and archive_data_buffer should remain empty
+    computed.evaluate()
+    assert computed.archive_data_buffer.shape[1] == 0
+
+
+def test_computed_curve_disconnected_dependencies():
+    """When a dependency is disconnected, the computed curve should produce no data."""
+    connected_curve = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+
+    disconnected_curve = ArchivePlotCurveItem()
+    disconnected_curve.archive_data_buffer = np.array(
+        [[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float
+    )
+    disconnected_curve.archive_points_accumulated = 6
+    disconnected_curve.connected = False
+    disconnected_curve.arch_connected = False
+
+    formula = r"f://{A}+{B}"
+    computed = ArchivePlotCurveItem(formula=formula, pvs={"A": connected_curve, "B": disconnected_curve})
+    computed.evaluate()
+
+    # Should have no data since B is disconnected
+    assert np.array_equal(computed.archive_data_buffer, np.zeros((2, 0), dtype=float))
+
+
+def test_computed_curve_disconnected_formula_dependency():
+    """When a formula dependency is disconnected, the parent computed curve should produce no data."""
+    connected_curve = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+
+    # Create a disconnected computed curve (formula with empty formula)
+    disconnected_formula = ArchivePlotCurveItem(formula="f://0")
+    disconnected_formula.archive_data_buffer = np.array(
+        [[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float
+    )
+    disconnected_formula.archive_points_accumulated = 6
+    disconnected_formula.connected = False
+    disconnected_formula.arch_connected = False
+
+    formula = r"f://{A}+{B}"
+    computed = ArchivePlotCurveItem(formula=formula, pvs={"A": connected_curve, "B": disconnected_formula})
+    computed.evaluate()
+
+    # Should have no data since B is disconnected
+    assert np.array_equal(computed.archive_data_buffer, np.zeros((2, 0), dtype=float))
+
+
+# ------------------------------------------------------------------ #
+#  Circular dependency detection tests                                 #
+# ------------------------------------------------------------------ #
+
+
+def test_circular_dependency_direct():
+    """A formula that references itself should be detected by _detect_cycle."""
+    curve_a = _make_connected_curve([[100, 105], [2, 3]])
+    # Test _detect_cycle static method directly: curve_a depending on itself is a cycle
+    assert ArchivePlotCurveItem._detect_cycle(curve_a, {"A": curve_a}) is True
+
+
+def test_circular_dependency_indirect():
+    """A -> B -> A chain should be detected."""
+    curve_a = _make_connected_curve([[100, 105], [2, 3]])
+    curve_b = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve_a})
+
+    # Now try to make A depend on B — that would create a cycle
+    assert ArchivePlotCurveItem._detect_cycle(curve_a, {"B": curve_b}) is True
+
+
+def test_circular_dependency_deep_chain():
+    """A -> B -> C -> A chain should be detected."""
+    curve_a = _make_connected_curve([[100, 105], [2, 3]])
+    curve_b = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve_a})
+    curve_c = ArchivePlotCurveItem(formula=r"f://5*{B}", pvs={"B": curve_b})
+
+    # Now try to make A depend on C — that would create a cycle
+    assert ArchivePlotCurveItem._detect_cycle(curve_a, {"C": curve_c}) is True
+
+
+def test_no_circular_dependency():
+    """A valid chain: A -> B should not be flagged as circular."""
+    curve_a = _make_connected_curve([[100, 105], [2, 3]])
+    curve_b = _make_connected_curve([[100, 105], [4, 5]])
+
+    # C depends on both A and B — no cycle
+    assert ArchivePlotCurveItem._detect_cycle(curve_a, {"B": curve_b}) is False
+
+
+def test_max_dependency_depth_exceeded():
+    """A chain deeper than MAX_DEPENDENCY_DEPTH should be rejected at construction."""
+    # Build a chain up to the limit (this succeeds)
+    base_curve = _make_connected_curve([[100, 105], [2, 3]])
+    current = base_curve
+    for i in range(MAX_DEPENDENCY_DEPTH):
+        current = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": current})
+
+    # Adding one more layer should exceed the depth limit and raise ValueError
+    with pytest.raises(ValueError, match="maximum depth"):
+        ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": current})
+
+
+def test_dependency_depth_within_limit():
+    """A chain within MAX_DEPENDENCY_DEPTH should be allowed."""
+    base_curve = _make_connected_curve([[100, 105], [2, 3]])
+    current = base_curve
+    # Build a chain of depth 3 (well within limit)
+    for i in range(3):
+        current = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": current})
+
+    depth = ArchivePlotCurveItem._get_dependency_depth({"A": current})
+    assert depth <= MAX_DEPENDENCY_DEPTH
+
+
+# ------------------------------------------------------------------ #
+#  Computed curves skip archiver requests                              #
+# ------------------------------------------------------------------ #
+
+
+def test_request_data_skips_computed_curves(qtbot):
+    """Verify that requestDataFromArchiver skips computed curves."""
+    plot = PyDMArchiverTimePlot(optimized_data_bins=10)
+
+    # Create a normal curve
+    normal_curve = ArchivePlotCurveItem()
+    normal_curve.archive_data_request_signal.connect(inspect_data_request)
+
+    # Create a computed curve
+    computed_curve = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": normal_curve})
+
+    plot._curves.append(normal_curve)
+    plot._curves.append(computed_curve)
+
+    # Request data — only the normal curve should emit the signal
+    plot._archive_request_queued = True
+    plot.requestDataFromArchiver(100, 200)
+
+    # The normal curve's signal was emitted
+    assert inspect_data_request.min_x == 100
+    assert inspect_data_request.max_x == 199
+
+
+# ------------------------------------------------------------------ #
+#  to_dict for computed curves                                         #
+# ------------------------------------------------------------------ #
+
+
+def test_computed_curve_to_dict():
+    """Verify to_dict includes formula and curveDict for computed curves."""
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+    curve1.address = "ca://TEST:PV1"
+
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+    d = computed.to_dict()
+
+    assert "formula" in d
+    assert d["formula"] == r"f://5*{A}"
+    assert "curveDict" in d
+    assert "A" in d["curveDict"]
+
+
+# ------------------------------------------------------------------ #
+#  Deprecated FormulaCurveItem backward compatibility                   #
+# ------------------------------------------------------------------ #
+
+
+def test_formula_curve_item_deprecated():
+    """Verify FormulaCurveItem emits a DeprecationWarning."""
+    curve1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        fc = FormulaCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "deprecated" in str(w[0].message).lower()
+
+    # Should still work as a computed curve
+    assert fc.is_computed is True
+
+
+def test_formula_curve_item_backward_compat():
+    """Test that FormulaCurveItem still works for the original test scenarios."""
+    curve_item1 = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
+    curve_item2 = _make_connected_curve([[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]])
+
+    curves1 = {"A": curve_item1}
+    curves2 = {"A": curve_item1, "B": curve_item2}
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        formula_curve_1 = FormulaCurveItem(formula=r"f://5*{A}", pvs=curves1)
+        formula_curve_2 = FormulaCurveItem(formula=r"f://log({A})", pvs=curves1)
+        formula_curve_3 = FormulaCurveItem(formula=r"f://{A}+{B}", pvs=curves2)
+        formula_curve_4 = FormulaCurveItem(formula=r"f://{A}*{B}", pvs=curves2)
 
     expected1 = np.array([[100, 105, 110, 115, 120, 125], [10, 15, 20, 25, 30, 35]], dtype=float)
     expected2 = np.array([[100, 105, 110, 115, 120, 125], np.log([2, 3, 4, 5, 6, 7])], dtype=float)
@@ -194,36 +453,32 @@ def test_formula_curve_item():
         [[101, 105, 106, 110, 111, 115, 116, 120, 121, 125], [2, 3, 6, 8, 12, 15, 20, 24, 30, 35]], dtype=float
     )
 
-    # Evaluate them all
     formula_curve_1.evaluate()
     formula_curve_2.evaluate()
     formula_curve_3.evaluate()
     formula_curve_4.evaluate()
 
-    # They should match our precalculated outcomes
     assert np.array_equal(formula_curve_1.archive_data_buffer, expected1)
     assert np.array_equal(formula_curve_2.archive_data_buffer, expected2)
     assert np.array_equal(formula_curve_3.archive_data_buffer, expected3)
     assert np.array_equal(formula_curve_4.archive_data_buffer, expected4)
 
 
-def test_disconnected_formula_curve_item():
-    # Create a connected ArchivePlotCurveItem
-    connected_curve = ArchivePlotCurveItem()
-    connected_curve.archive_data_buffer = np.array([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]], dtype=float)
-    connected_curve.archive_points_accumulated = 6
-    connected_curve.connected = True
-    connected_curve.arch_connected = True
+def test_disconnected_formula_curve_item_backward_compat():
+    """Test backward compatibility for disconnected FormulaCurveItem."""
+    connected_curve = _make_connected_curve([[100, 105, 110, 115, 120, 125], [2, 3, 4, 5, 6, 7]])
 
-    # Create a disconnected ArchivePlotCurveItem
     disconnected_curve = ArchivePlotCurveItem()
-    disconnected_curve.archive_data_buffer = np.array([[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float)
+    disconnected_curve.archive_data_buffer = np.array(
+        [[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float
+    )
     disconnected_curve.archive_points_accumulated = 6
     disconnected_curve.connected = False
     disconnected_curve.arch_connected = False
 
-    # Create a disconnected FormulaCurveItem
-    disconnected_formula = FormulaCurveItem(formula="")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        disconnected_formula = FormulaCurveItem(formula="f://0")
     disconnected_formula.archive_data_buffer = np.array(
         [[101, 106, 111, 116, 121, 126], [1, 2, 3, 4, 5, 6]], dtype=float
     )
@@ -233,21 +488,10 @@ def test_disconnected_formula_curve_item():
 
     formula = r"f://{A}+{B}"
 
-    # Create FormulaCurve using the 2 curves
-    # This formula curve should be disconnected
-    pv_dict = dict()
-    pv_dict["A"] = connected_curve
-    pv_dict["B"] = disconnected_curve
-
-    formula_curve_1 = FormulaCurveItem(formula=formula, pvs=pv_dict)
-
-    # Create FormulaCurve using the connected curve and the disconnected formula curve
-    # This formula curve should be disconnected
-    pv_dict = dict()
-    pv_dict["A"] = connected_curve
-    pv_dict["B"] = disconnected_formula
-
-    formula_curve_2 = FormulaCurveItem(formula=formula, pvs=pv_dict)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        formula_curve_1 = FormulaCurveItem(formula=formula, pvs={"A": connected_curve, "B": disconnected_curve})
+        formula_curve_2 = FormulaCurveItem(formula=formula, pvs={"A": connected_curve, "B": disconnected_formula})
 
     formula_curve_1.evaluate()
     formula_curve_2.evaluate()
@@ -255,3 +499,35 @@ def test_disconnected_formula_curve_item():
     # Both curves should have no data
     assert np.array_equal(formula_curve_1.archive_data_buffer, np.zeros((2, 0), dtype=float))
     assert np.array_equal(formula_curve_2.archive_data_buffer, np.zeros((2, 0), dtype=float))
+
+
+# ------------------------------------------------------------------ #
+#  Editor model tests                                                  #
+# ------------------------------------------------------------------ #
+
+
+def test_editor_get_data_computed_curve():
+    """Verify the editor model's get_data returns the formula for computed curves."""
+    from pydm.widgets.archiver_time_plot_editor import PyDMArchiverTimePlotCurvesModel
+
+    curve1 = _make_connected_curve([[100, 105], [2, 3]])
+    computed = ArchivePlotCurveItem(formula=r"f://5*{A}", pvs={"A": curve1})
+
+    # Create a minimal plot for the model
+    plot = PyDMArchiverTimePlot()
+    model = PyDMArchiverTimePlotCurvesModel(plot)
+
+    result = model.get_data("Channel", computed)
+    assert result == r"f://5*{A}"
+
+
+def test_editor_get_data_normal_curve():
+    """Verify the editor model's get_data returns the address for normal curves."""
+    from pydm.widgets.archiver_time_plot_editor import PyDMArchiverTimePlotCurvesModel
+
+    curve = ArchivePlotCurveItem(channel_address="ca://TEST:PV1")
+    plot = PyDMArchiverTimePlot()
+    model = PyDMArchiverTimePlotCurvesModel(plot)
+
+    result = model.get_data("Channel", curve)
+    assert result == "ca://TEST:PV1"

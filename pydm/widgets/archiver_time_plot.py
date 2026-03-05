@@ -13,11 +13,7 @@ from pydm.widgets import PyDMTimePlot
 from qtpy.QtCore import Qt, QObject, QTimer, Property, Signal, Slot
 from qtpy.QtGui import QColor, QPen
 import logging
-from math import *  # noqa
-from statistics import mean  # noqa
-
-# We noqa those two because those functions/vars are useful in eval() but
-# are never explicitly called by us, only in the background.
+from pydm.utilities.safe_eval import SafeExpressionEvaluator, UnsafeExpressionError, MAX_DEPENDENCY_DEPTH
 from pydm.widgets.baseplot import BasePlotCurveItem
 
 logger = logging.getLogger(__name__)
@@ -57,6 +53,18 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
     archive_data_received_signal = Signal()
     archive_channel_connection = Signal(bool)
     prompt_archive_request = Signal()
+    live_channel_connection = Signal(bool)
+    formula_invalid_signal = Signal()
+
+    # Shared evaluator instance for all computed curves
+    _shared_evaluator = None
+
+    @classmethod
+    def _get_evaluator(cls):
+        """Return the shared SafeExpressionEvaluator instance."""
+        if cls._shared_evaluator is None:
+            cls._shared_evaluator = SafeExpressionEvaluator()
+        return cls._shared_evaluator
 
     def __init__(
         self,
@@ -65,12 +73,21 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         liveData: bool = True,
         showExtensionLine: bool = False,
         optimized_data_bins: Optional[int] = None,
+        formula: Optional[str] = None,
+        pvs: Optional[dict] = None,
         **kws,
     ):
         # Attributes that must exist before super().__init__() call
         self.archive_channel = None
         self.error_bar = ErrorBarItem()
         self._extension_line = PlotCurveItem()
+
+        # Computed mode attributes (must exist before super().__init__)
+        self._formula = None
+        self._true_formula = None
+        self._pvs = pvs if pvs else {}
+        self._live_connections = {}
+        self._arch_connections = {}
 
         super().__init__(**kws)
 
@@ -89,7 +106,418 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
 
         self.destroyed.connect(lambda: self.remove_error_bar())
         self.destroyed.connect(lambda: self.remove_extension_line())
-        self.address = channel_address
+
+        if formula is not None:
+            # Computed mode: derive data from a formula over other curves
+            self._init_computed_mode(formula, pvs or {}, useArchiveData, liveData, kws.get("plot_style"))
+        else:
+            # Normal mode: connect to archiver channel
+            self.address = channel_address
+
+    # ------------------------------------------------------------------ #
+    #  Computed mode initialization and formula management                 #
+    # ------------------------------------------------------------------ #
+
+    def _init_computed_mode(self, formula, pvs, use_archive_data, live_data, plot_style):
+        """Set up this curve as a computed (formula) curve."""
+        self._pvs = pvs if pvs else {}
+        self.use_archive_data = use_archive_data
+        self._liveData = live_data
+        if plot_style:
+            self.plot_style = plot_style
+
+        # Start with empty buffers (filled during evaluation)
+        self.archive_data_buffer = np.zeros((2, 0), order="f", dtype=float)
+        self.data_buffer = np.zeros((2, 0), order="f", dtype=float)
+        self.points_accumulated = 0
+        self.archive_points_accumulated = 0
+
+        # Validate no circular dependencies
+        if self._pvs and self._detect_cycle(self, self._pvs):
+            logger.error("Circular dependency detected in formula curve")
+            self.formula_invalid_signal.emit()
+            raise ValueError("Circular dependency detected in formula curve")
+
+        # Validate dependency depth
+        if self._pvs and self._get_dependency_depth(self._pvs) > MAX_DEPENDENCY_DEPTH:
+            logger.error(f"Formula dependency chain exceeds maximum depth of {MAX_DEPENDENCY_DEPTH}")
+            self.formula_invalid_signal.emit()
+            raise ValueError(f"Formula dependency chain exceeds maximum depth of {MAX_DEPENDENCY_DEPTH}")
+
+        # Set formula (triggers createTrueFormula)
+        self._formula = formula
+        self._true_formula = self._create_true_formula()
+
+        # Track connections from dependency curves
+        self.connected, self.arch_connected = None, None
+        for curve in self._pvs.values():
+            self._live_connections[curve] = curve.connected
+            self._arch_connections[curve] = curve.arch_connected
+
+            curve.live_channel_connection.connect(self._on_dep_live_conn_change)
+            curve.archive_channel_connection.connect(self._on_dep_arch_conn_change)
+
+            if hasattr(curve, "archive_data_received_signal"):
+                curve.archive_data_received_signal.connect(self._on_dependency_archive_data_received)
+
+            if hasattr(curve, "data_changed"):
+                curve.data_changed.connect(self._on_dependency_data_changed)
+
+        self._connection_status_check()
+        QTimer.singleShot(100, self._initial_evaluation)
+
+    @property
+    def is_computed(self):
+        """Return True if this curve derives its data from a formula."""
+        return self._formula is not None
+
+    @property
+    def formula(self):
+        """The formula string (e.g. 'f://{A} + {B}')."""
+        return self._formula
+
+    @formula.setter
+    def formula(self, formula):
+        self._formula = formula
+        self._true_formula = self._create_true_formula()
+
+    @staticmethod
+    def _detect_cycle(curve, pvs):
+        """Return True if adding *pvs* as dependencies of *curve* would create a cycle."""
+        visited = set()
+
+        def _walk(node):
+            node_id = id(node)
+            if node_id in visited:
+                return False
+            if node is curve:
+                return True
+            visited.add(node_id)
+            deps = getattr(node, "_pvs", None) or {}
+            for dep in deps.values():
+                if _walk(dep):
+                    return True
+            return False
+
+        for dep in pvs.values():
+            if _walk(dep):
+                return True
+        return False
+
+    @staticmethod
+    def _get_dependency_depth(pvs, current_depth=0):
+        """Return the maximum depth of the dependency graph."""
+        if not pvs or current_depth > MAX_DEPENDENCY_DEPTH:
+            return current_depth
+        max_depth = current_depth
+        for dep in pvs.values():
+            child_pvs = getattr(dep, "_pvs", None) or {}
+            depth = ArchivePlotCurveItem._get_dependency_depth(child_pvs, current_depth + 1)
+            max_depth = max(max_depth, depth)
+        return max_depth
+
+    def _create_true_formula(self):
+        """Convert a human-readable formula to a computer-evaluable form."""
+        if not self._formula:
+            return None
+        prefix = "f://"
+        if not self._formula.startswith(prefix):
+            logger.warning("Invalid formula: must start with 'f://'")
+            return None
+        formula = self._formula[len(prefix):]
+        # Replace {Name} references with pvValues["Name"]
+        formula = re.sub(r"{(.+?)}", r'pvValues["\g<1>"]', formula)
+        # ^ -> ** (exponentiation)
+        formula = re.sub(r"\^", r"**", formula)
+        # mean() needs a list argument
+        formula = re.sub(r"mean\((.+?)\)", r"mean([\g<1>])", formula)
+        # ln -> log (natural log)
+        formula = re.sub(r"ln\((.+?)\)", r"log(\g<1>)", formula)
+        return formula
+
+    def _check_formula(self):
+        """Validate that all dependency curves still exist."""
+        for name, curve in self._pvs.items():
+            if not curve.exists:
+                logger.warning(f"{name} is no longer a valid row name")
+                self.exists = False
+                return False
+        return True
+
+    def _initial_evaluation(self):
+        """Perform initial evaluation after dependencies are set up."""
+        self._evaluate_formula()
+        self.redrawCurve()
+
+    def evaluate(self):
+        """Public API for triggering formula evaluation on computed curves.
+
+        Equivalent to calling ``_evaluate_formula()``.  Provided so that
+        external code (and the deprecated ``FormulaCurveItem``) can request
+        a synchronous re-evaluation.
+        """
+        self._evaluate_formula()
+
+    # ------------------------------------------------------------------ #
+    #  Formula evaluation (moved from FormulaCurveItem)                    #
+    # ------------------------------------------------------------------ #
+
+    def _evaluate_formula(self):
+        """Evaluate the formula and fill the archive and live data buffers.
+
+        Uses timestamp union with forward-fill across all dependency curves.
+        """
+        formula = self._true_formula
+        if not formula or not self._check_formula():
+            logger.error("invalid formula")
+            self.formula_invalid_signal.emit()
+            return
+
+        evaluator = self._get_evaluator()
+
+        # Validate the formula once (will raise UnsafeExpressionError if bad)
+        try:
+            evaluator.validate(formula)
+        except UnsafeExpressionError as exc:
+            logger.error(f"Unsafe formula rejected: {exc}")
+            self.formula_invalid_signal.emit()
+            return
+
+        # Case 1: Constant formula (no dependencies)
+        if not self._pvs:
+            try:
+                constant_value = evaluator.evaluate(formula, {})
+            except Exception:
+                logger.warning("Formula evaluation failed for constant formula")
+                return
+
+            self._fill_constant_buffers(constant_value)
+            return
+
+        # Case 2: All dependencies are computed constants (no PVs of their own)
+        if all(self._is_constant_curve(c) for c in self._pvs.values()):
+            pvValues = {}
+            for name, c in self._pvs.items():
+                if c.points_accumulated > 0:
+                    pvValues[name] = float(c.data_buffer[1, 0])
+                elif c.archive_points_accumulated > 0:
+                    pvValues[name] = float(c.archive_data_buffer[1, 0])
+                else:
+                    pvValues[name] = 0.0
+
+            try:
+                constant_value = evaluator.evaluate(formula, {"pvValues": pvValues})
+            except Exception:
+                logger.warning("Formula evaluation failed for constant-dependency formula")
+                return
+
+            self._fill_constant_buffers(constant_value)
+            return
+
+        # Case 3: Real dependencies with time-series data
+        all_constants = all(self._is_constant_curve(c) for c in self._pvs.values())
+        if not all_constants and not (self.connected or self.arch_connected):
+            return
+
+        # Reset buffers
+        self.archive_data_buffer = np.zeros((2, 0), order="f", dtype=float)
+        self.data_buffer = np.zeros((2, 0), order="f", dtype=float)
+        self.points_accumulated = 0
+        self.archive_points_accumulated = 0
+
+        # Evaluate archive data
+        pv_indices = self._set_up_eval(archive=True)
+        pv_archive_data = {}
+        pv_values = {}
+        for pv in self._pvs:
+            pv_archive_data[pv] = self._pvs[pv].archive_data_buffer
+            pv_values[pv] = pv_archive_data[pv][1][pv_indices[pv] - 1]
+
+        self.archive_data_buffer = self._compute_evaluation(
+            formula=formula, pv_data=pv_archive_data, pv_values=pv_values,
+            pv_indices=pv_indices, archive=True
+        )
+
+        # Evaluate live data
+        if self._liveData:
+            self.points_accumulated = 0
+            pv_indices = self._set_up_eval(archive=False)
+            pv_values = {}
+            pv_live_data = {}
+            for pv in self._pvs:
+                pv_live_data[pv] = self._pvs[pv].data_buffer
+                pv_values[pv] = pv_live_data[pv][1][pv_indices[pv] - 1]
+            self.data_buffer = self._compute_evaluation(
+                formula=formula, pv_data=pv_live_data, pv_values=pv_values,
+                pv_indices=pv_indices, archive=False
+            )
+
+    @staticmethod
+    def _is_constant_curve(curve):
+        """Check if a curve is a computed constant (formula with no dependencies)."""
+        return (
+            isinstance(curve, ArchivePlotCurveItem)
+            and curve.is_computed
+            and not curve._pvs
+        )
+
+    def _fill_constant_buffers(self, constant_value):
+        """Synthesize archive and live buffers for a constant formula value."""
+        now = time.time()
+        span = 365 * 24 * 60 * 60
+        ts = np.linspace(now - span, now + span, 100)
+        vals = np.full(ts.shape[0], constant_value)
+
+        mid = ts.shape[0] // 2
+        self.archive_data_buffer = np.array([ts[:mid], vals[:mid]])
+        self.data_buffer = np.array([ts[mid:], vals[mid:]])
+        self.archive_points_accumulated = mid
+        self.points_accumulated = ts.shape[0] - mid
+
+    def _set_up_eval(self, archive):
+        """Set up starting indices for the timestamp merge evaluation."""
+        pv_indices = {}
+        for pv, curve in self._pvs.items():
+            if self._is_constant_curve(curve):
+                pv_indices[pv] = 0
+            else:
+                idx = 0
+                if archive:
+                    pv_times = curve.archive_data_buffer[0]
+                    while idx < len(pv_times) - 1 and pv_times[idx] < self.min_archiver_x():
+                        idx += 1
+                else:
+                    pv_times = curve.data_buffer[0]
+                    while idx < len(pv_times) - 1 and pv_times[idx] < self.min_x():
+                        idx += 1
+                pv_indices[pv] = idx
+        return pv_indices
+
+    def _compute_evaluation(self, formula, pv_data, pv_values, pv_indices, archive):
+        """Evaluate the formula at every timestamp in the union of all dependency curves.
+
+        Uses forward-fill: if a dependency hasn't updated at the current timestamp,
+        its last-seen value is used.
+        """
+        evaluator = self._get_evaluator()
+        output_times = []
+        output_values = []
+
+        constant_curves = set()
+        for pv, curve in self._pvs.items():
+            if self._is_constant_curve(curve):
+                constant_curves.add(pv)
+                if archive and curve.archive_points_accumulated > 0:
+                    pv_values[pv] = curve.archive_data_buffer[1][0]
+                elif not archive and curve.points_accumulated > 0:
+                    pv_values[pv] = curve.data_buffer[1][0]
+                else:
+                    pv_values[pv] = 0
+
+        while True:
+            if archive:
+                self.archive_points_accumulated += 1
+            else:
+                self.points_accumulated += 1
+
+            min_pv = None
+            current_time = 0
+
+            for pv in self._pvs:
+                if pv in constant_curves:
+                    continue
+
+                pv_times = pv_data[pv][0]
+                pv_idx = pv_indices[pv]
+
+                if pv_idx >= len(pv_times):
+                    continue
+
+                if min_pv is None or pv_times[pv_idx] < current_time:
+                    min_pv = pv
+                    current_time = pv_times[pv_idx]
+
+            if min_pv is None:
+                break
+
+            pv_values[min_pv] = pv_data[min_pv][1][pv_indices[min_pv]]
+
+            try:
+                formula_value = evaluator.evaluate(formula, {"pvValues": pv_values})
+            except Exception:
+                logger.warning("Formula evaluation failed")
+                formula_value = 0
+
+            output_times.append(current_time)
+            output_values.append(formula_value)
+
+            pv_indices[min_pv] += 1
+
+            if pv_indices[min_pv] >= len(pv_data[min_pv][0]):
+                break
+
+        if output_times:
+            return np.array([output_times, output_values], dtype=float)
+        return np.zeros((2, 0), order="f", dtype=float)
+
+    # ------------------------------------------------------------------ #
+    #  Dependency signal handling (for computed curves)                     #
+    # ------------------------------------------------------------------ #
+
+    def _connection_status_check(self):
+        """Check connection status of all dependency curves."""
+        if self._live_connections:
+            connected = all(self._live_connections.values())
+            self.connected = connected
+            self.live_channel_connection.emit(connected)
+
+        if self._arch_connections:
+            connected = all(self._arch_connections.values())
+            self.arch_connected = connected
+            self.archive_channel_connection.emit(connected)
+
+    @Slot(bool)
+    def _on_dep_live_conn_change(self, status):
+        """Handle live connection change from a dependency curve."""
+        curve = self.sender()
+        self._live_connections[curve] = status
+        self._connection_status_check()
+
+    @Slot(bool)
+    def _on_dep_arch_conn_change(self, status):
+        """Handle archive connection change from a dependency curve."""
+        curve = self.sender()
+        self._arch_connections[curve] = status
+        self._connection_status_check()
+
+    @Slot()
+    def _on_dependency_archive_data_received(self):
+        """Called when any dependency curve receives new archive data."""
+        if self.use_archive_data and self._pvs:
+            if not hasattr(self, "_formula_update_timer"):
+                self._formula_update_timer = QTimer()
+                self._formula_update_timer.timeout.connect(self._delayed_formula_update)
+                self._formula_update_timer.setSingleShot(True)
+            self._formula_update_timer.stop()
+            self._formula_update_timer.start(50)
+
+    @Slot()
+    def _on_dependency_data_changed(self):
+        """Called when any dependency curve's data changes."""
+        if self._pvs:
+            if not hasattr(self, "_formula_update_timer"):
+                self._formula_update_timer = QTimer()
+                self._formula_update_timer.timeout.connect(self._delayed_formula_update)
+                self._formula_update_timer.setSingleShot(True)
+            self._formula_update_timer.stop()
+            self._formula_update_timer.start(50)
+
+    def _delayed_formula_update(self):
+        """Perform the actual formula update after batching signals."""
+        self._evaluate_formula()
+        self.redrawCurve()
+        if self.archive_points_accumulated > 0:
+            self.archive_data_received_signal.emit()
 
     def to_dict(self) -> OrderedDict:
         """Returns an OrderedDict representation with values for all properties needed to recreate this curve."""
@@ -100,12 +528,28 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
                 ("showExtensionLine", self._show_extension_line),
             ]
         )
+        if self.is_computed:
+            dic_["formula"] = self._formula
+            curve_dict = {}
+            for header, curve in self._pvs.items():
+                if isinstance(curve, ArchivePlotCurveItem) and curve.is_computed:
+                    curve_dict[header] = curve._formula
+                else:
+                    curve_dict[header] = curve.address
+            dic_["curveDict"] = curve_dict
         dic_.update(super(ArchivePlotCurveItem, self).to_dict())
         return dic_
 
     @TimePlotCurveItem.address.setter
     def address(self, new_address: str) -> None:
-        """Creates the channel for the input address for communicating with the archiver appliance plugin."""
+        """Creates the channel for the input address for communicating with the archiver appliance plugin.
+        In computed mode, stores the formula string instead."""
+        if self.is_computed:
+            # In computed mode, address is an alias for the formula
+            self._formula = new_address
+            self._true_formula = self._create_true_formula()
+            return
+
         TimePlotCurveItem.address.fset(self, new_address)
 
         if self.archive_channel:
@@ -179,6 +623,12 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
 
     @property
     def liveData(self):
+        if self.is_computed:
+            # In computed mode, liveData is True only if all dependencies have live data
+            for curve in self._pvs.values():
+                if not curve.liveData:
+                    return False
+            return True
         return self._liveData
 
     @liveData.setter
@@ -187,12 +637,13 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
             self._liveData = False
             return
 
-        min_x = self.data_buffer[0, self._bufferSize - 1]
-        max_x = time.time()
+        if not self.is_computed:
+            min_x = self.data_buffer[0, self._bufferSize - 1]
+            max_x = time.time()
 
-        # Avoids noisy requests when first rendering the plot
-        if max_x - min_x > 5:
-            self.archive_data_request_signal.emit(min_x, max_x - 1, "")
+            # Avoids noisy requests when first rendering the plot
+            if max_x - min_x > 5:
+                self.archive_data_request_signal.emit(min_x, max_x - 1, "")
 
         self._liveData = True
 
@@ -294,6 +745,40 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         """
         Redraw the curve with any new data added since the last draw call.
         """
+        if self.is_computed:
+            self._evaluate_formula()
+            try:
+                archive_x = self.archive_data_buffer[0, -self.archive_points_accumulated:].astype(float) \
+                    if self.archive_points_accumulated > 0 else np.empty(0, dtype=float)
+                archive_y = self.archive_data_buffer[1, -self.archive_points_accumulated:].astype(float) \
+                    if self.archive_points_accumulated > 0 else np.empty(0, dtype=float)
+                live_x = self.data_buffer[0, -self.points_accumulated:].astype(float) \
+                    if self.points_accumulated > 0 else np.empty(0, dtype=float)
+                live_y = self.data_buffer[1, -self.points_accumulated:].astype(float) \
+                    if self.points_accumulated > 0 else np.empty(0, dtype=float)
+                x = np.concatenate((archive_x, live_x))
+                y = np.concatenate((archive_y, live_y))
+
+                if len(x) > 0:
+                    valid_mask = x > 0
+                    x = x[valid_mask]
+                    y = y[valid_mask]
+
+                    # Remove near-duplicate timestamps
+                    if len(x) > 1:
+                        sort_indices = np.argsort(x)
+                        x = x[sort_indices]
+                        y = y[sort_indices]
+                        x_diff = np.diff(x)
+                        significant_diff = np.concatenate(([True], x_diff > 0.001))
+                        x = x[significant_diff]
+                        y = y[significant_diff]
+
+                self.setData(y=y, x=x)
+            except (ZeroDivisionError, OverflowError, TypeError):
+                pass
+            return
+
         if self.archive_points_accumulated == 0:
             super().redrawCurve()
         else:
@@ -469,6 +954,8 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
 
     def channels(self) -> List[PyDMChannel]:
         """Return the list of channels this curve is connected to"""
+        if self.is_computed:
+            return [None]
         return [self.channel, self.archive_channel]
 
     def min_archiver_x(self):
@@ -480,6 +967,15 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         float
             The timestamp of the oldest data point in the archiver data buffer.
         """
+        if self.is_computed:
+            if not self._pvs:
+                if self.archive_points_accumulated > 0:
+                    return float(self.archive_data_buffer[0, 0])
+                return time.time() - DEFAULT_TIME_SPAN
+            minx = 0.0
+            for curve in self._pvs.values():
+                minx = max(curve.min_archiver_x(), minx)
+            return minx
         if self.archive_points_accumulated:
             return self.archive_data_buffer[0, -self.archive_points_accumulated]
         else:
@@ -495,10 +991,51 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         float
             The timestamp of the most recent data point in the archiver data buffer.
         """
+        if self.is_computed:
+            if not self._pvs:
+                if self.archive_points_accumulated > 0:
+                    return float(self.archive_data_buffer[0, -1])
+                return time.time()
+            maxx = APPROX_SECONDS_300_YEARS
+            for curve in self._pvs.values():
+                maxx = min(curve.max_archiver_x(), maxx)
+            return maxx
         if self.archive_points_accumulated:
             return self.archive_data_buffer[0, -1]
         else:
             return self.min_x()
+
+    def min_x(self):
+        """Oldest valid timestamp from the data buffer.
+        In computed mode, delegates to dependency curves."""
+        if self.is_computed:
+            if not self._pvs:
+                if self.archive_points_accumulated > 0:
+                    return float(self.archive_data_buffer[0, 0])
+                if self.points_accumulated > 0:
+                    return float(self.data_buffer[0, 0])
+                return time.time() - DEFAULT_TIME_SPAN
+            minx = 0.0
+            for curve in self._pvs.values():
+                minx = max(curve.min_x(), minx)
+            return minx
+        return super().min_x()
+
+    def max_x(self):
+        """Most recent timestamp from the data buffer.
+        In computed mode, delegates to dependency curves."""
+        if self.is_computed:
+            if not self._pvs:
+                if self.points_accumulated > 0:
+                    return float(self.data_buffer[0, -1])
+                if self.archive_points_accumulated > 0:
+                    return float(self.archive_data_buffer[0, -1])
+                return time.time()
+            maxx = APPROX_SECONDS_300_YEARS
+            for curve in self._pvs.values():
+                maxx = min(curve.max_x(), maxx)
+            return maxx
+        return super().max_x()
 
     def receiveNewValue(self, new_value: float) -> None:
         """Fill incoming live data if requested by user.
@@ -531,36 +1068,12 @@ class ArchivePlotCurveItem(TimePlotCurveItem):
         self.error_bar.show()
 
 
-class FormulaCurveItem(BasePlotCurveItem):
+class FormulaCurveItem(ArchivePlotCurveItem):
+    """Deprecated: Use ``ArchivePlotCurveItem(formula=..., pvs=...)`` instead.
+
+    This class is kept for backward compatibility only. It delegates entirely
+    to ArchivePlotCurveItem's computed mode.
     """
-    FormulaCurveItem is a BasePlotCurve that takes in a formula of curves and evaluates to graph a function.
-
-    To use, instead of typing in a PV channel, this takes in the prefix 'f://' to indicate a function, then
-    uses curly braces '{<PV row header>}' to find which curves to use as inputs. Other than that, FormulaCurveItems
-    have the capacity to handle basic arithmetic functions and also special functions like log() and trigonometry.
-
-    Finally, when populating its data buffers, it uses the union of the timesteps for each of its input curves, and uses
-    last seen data to fill in the gaps when calculating.
-
-    Parameters
-    ----------
-    formula : str
-        The formula that we are graphing
-    use_archive_data : bool
-        If True, requests will be made to archiver appliance for archived data when
-        the plot is zoomed or scrolled to the left.
-    pvs: dict[str: BasePlotCurveItem]
-        Has all the information for our FormulaCurveItem to evaluate the value at every timestep
-    **kws : dict[str: any]
-        Additional parameters supported by pyqtgraph.PlotDataItem.
-    """
-
-    _channels = ("channel",)
-    archive_data_request_signal = Signal(float, float, str)
-    archive_data_received_signal = Signal()
-    live_channel_connection = Signal(bool)
-    archive_channel_connection = Signal(bool)
-    formula_invalid_signal = Signal()
 
     def __init__(
         self,
@@ -572,555 +1085,29 @@ class FormulaCurveItem(BasePlotCurveItem):
         plot_style: str = "Line",
         **kws,
     ):
-        super(FormulaCurveItem, self).__init__(**kws)
-        self.color = color
-        self.use_archive_data = use_archive_data
-        self.points_accumulated = 0
-        self.archive_points_accumulated = 0
-        # Start with empty buffers because we don't
-        # calculate anything until we try to draw the curve
-        self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
-        self._bufferSize = 0
-        self.archive_data_buffer = np.zeros((2, 0), order="f", dtype=float)
-
-        self.data_buffer = np.zeros((2, 0), order="f", dtype=float)
-
-        # Have a formula for internal calculations, that the user does not see
-        self._formula = formula
-        self._trueFormula = self.createTrueFormula()
-        self.pvs = pvs if pvs else {}
-        self._liveData = liveData
-        self.plot_style = plot_style
-        self.connected, self.arch_connected = None, None
-        self.live_connections, self.arch_connections = {}, {}
-
-        for curve in self.pvs.values():
-            self.live_connections[curve] = curve.connected
-            self.arch_connections[curve] = curve.arch_connected
-
-            curve.live_channel_connection.connect(self.live_conn_change)
-            curve.archive_channel_connection.connect(self.arch_conn_change)
-
-            if hasattr(curve, "archive_data_received_signal"):
-                curve.archive_data_received_signal.connect(self.on_dependency_archive_data_received)
-
-            if hasattr(curve, "data_changed"):
-                curve.data_changed.connect(self.on_dependency_data_changed)
-
-        self.connection_status_check()
-        QTimer.singleShot(100, self.initial_evaluation)
-
-    def initial_evaluation(self):
-        """Perform initial evaluation after dependencies are set up"""
-        self.evaluate()
-        self.redrawCurve()
-
-    def to_dict(self) -> OrderedDict:
-        """Returns an OrderedDict representation with values for all properties needed to recreate this curve."""
-        dic_ = OrderedDict(
-            [
-                ("useArchiveData", self.use_archive_data),
-                ("liveData", self.liveData),
-                ("plot_style", self.plot_style),
-                ("formula", self.formula),
-            ]
+        warnings.warn(
+            "FormulaCurveItem is deprecated. Use ArchivePlotCurveItem(formula=..., pvs=...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        curveDict = dict()
-        for header, curve in self.pvs.items():
-            if isinstance(curve, ArchivePlotCurveItem):
-                curveDict[header] = curve.address
-            else:
-                curveDict[header] = curve.formula
-        dic_.update({"curveDict": curveDict})
-        dic_.update(super().to_dict())
-        return dic_
-
-    @property
-    def liveData(self):
-        for pv in self.pvs.keys():
-            if not self.pvs[pv].liveData:
-                return False
-        return True
-
-    @liveData.setter
-    def liveData(self, get_live: bool):
-        if not get_live:
-            self._liveData = False
-            return
-        self._liveData = True
-
-    @property
-    def formula(self):
-        return self._formula
-
-    @formula.setter
-    def formula(self, formula: str):
-        self._formula = formula
-        self._trueFormula = self.createTrueFormula()
-
-    @property
-    def channel(self):
-        return None
-
-    def checkFormula(self) -> bool:
-        """Make sure that our formula is still valid.
-        Namely, all of the input curves need to still exist in the viewer"""
-        for pv in self.pvs.keys():
-            if not self.pvs[pv].exists:
-                logger.warning(pv + " is no longer a valid row name")
-                # If one of the rows we rely on is gone, not only are we no longer a valid formula,
-                # but all rows that rely on us are also invalid.
-                self.exists = False
-                return False
-        return True
-
-    def createTrueFormula(self) -> str:
-        """Convert our human-readable formula to something easier to use for the computer, in the background only"""
-        prefix = "f://"
-        if not self.formula.startswith(prefix):
-            logger.warning("Invalid Formula")
-            return None
-        formula = self.formula[len(prefix) :]
-        # custom function to clean up the formula. First thing replace rows with data entries
-        formula = re.sub(r"{(.+?)}", r'pvValues["\g<1>"]', formula)
-        formula = re.sub(r"\^", r"**", formula)
-        formula = re.sub(r"mean\((.+?)\)", r"mean([\g<1>])", formula)
-        # mean() requires a list of values, so just put brackets around the item
-        formula = re.sub(r"ln\((.+?)\)", r"log(\g<1>)", formula)
-        # ln is more intuitive than log
-        return formula
-
-    def evaluate(self) -> None:
-        """
-        Use our formula and input curves to calculate our value at each timestep.
-        If one curve updates at a certain timestep and another does not, it uses the previously
-        seen data of the second curve, and assumes it is accurate at the current timestep.
-        """
-        formula = self._trueFormula
-        if not formula or not self.checkFormula():
-            logger.error("invalid formula")
-            self.formula_invalid_signal.emit()
-            return
-
-        if not self.pvs:
-            constant_value = eval(self._trueFormula)
-
-            current_time = time.time()
-
-            time_span = 365 * 24 * 60 * 60
-            start_time = current_time - time_span
-            end_time = current_time + time_span
-
-            num_points = 100
-            timestamps = np.linspace(start_time, end_time, num_points)
-            values = np.full(num_points, constant_value)
-
-            mid_point = num_points // 2
-
-            self.archive_data_buffer = np.array([timestamps[:mid_point], values[:mid_point]])
-            self.data_buffer = np.array([timestamps[mid_point:], values[mid_point:]])
-
-            self.archive_points_accumulated = mid_point
-            self.points_accumulated = num_points - mid_point
-
-            return
-
-        # If all dependencies are constant formula curves, synthesize a constant series.
-        if self.pvs and all(isinstance(c, FormulaCurveItem) and not c.pvs for c in self.pvs.values()):
-            # Build pvValues from child constant buffers if present (fallback 0.0)
-            pvValues = {}
-            for name, c in self.pvs.items():
-                if c.points_accumulated > 0:
-                    pvValues[name] = float(c.data_buffer[1, 0])
-                elif c.archive_points_accumulated > 0:
-                    pvValues[name] = float(c.archive_data_buffer[1, 0])
-                else:
-                    pvValues[name] = 0.0
-
-            constant_value = eval(self._trueFormula, globals(), {"pvValues": pvValues})
-
-            now = time.time()
-            span = 365 * 24 * 60 * 60
-            ts = np.linspace(now - span, now + span, 100)
-            vals = np.full(ts.shape[0], constant_value)
-
-            mid = ts.shape[0] // 2
-            self.archive_data_buffer = np.array([ts[:mid], vals[:mid]])
-            self.data_buffer = np.array([ts[mid:], vals[mid:]])
-            self.archive_points_accumulated = mid
-            self.points_accumulated = ts.shape[0] - mid
-            return
-
-        all_constants = all(isinstance(c, FormulaCurveItem) and not c.pvs for c in self.pvs.values())
-        if not all_constants and not (self.connected or self.arch_connected):
-            return
-
-        pvArchiveData = dict()
-        pvLiveData = dict()
-        pvIndices = dict()
-        pvValues = dict()
-        self.archive_data_buffer = np.zeros((2, 0), order="f", dtype=float)
-        self.data_buffer = np.zeros((2, 0), order="f", dtype=float)
-        # Reset buffers
-        self.points_accumulated = 0
-        self.archive_points_accumulated = 0
-        # Populate new dictionaries, simply for ease of access and readability
-        pvIndices = self.set_up_eval(archive=True)
-        for pv in self.pvs.keys():
-            pvArchiveData[pv] = self.pvs[pv].archive_data_buffer
-            pvValues[pv] = pvArchiveData[pv][1][pvIndices[pv] - 1]
-
-        self.archive_data_buffer = self.compute_evaluation(
-            formula=formula, pvData=pvArchiveData, pvValues=pvValues, pvIndices=pvIndices, archive=True
+        super().__init__(
+            formula=formula,
+            pvs=pvs,
+            useArchiveData=use_archive_data,
+            liveData=liveData,
+            color=color,
+            plot_style=plot_style,
+            **kws,
         )
-        if self.liveData:
-            self.points_accumulated = 0
-            pvIndices = self.set_up_eval(archive=False)
-            pvValues = dict()
-            # Do literally the exact same thing for live data
 
-            for pv in self.pvs.keys():
-                pvLiveData[pv] = self.pvs[pv].data_buffer
-                pvValues[pv] = pvLiveData[pv][1][pvIndices[pv] - 1]
-            self.data_buffer = self.compute_evaluation(
-                formula=formula, pvData=pvLiveData, pvValues=pvValues, pvIndices=pvIndices, archive=False
-            )
-
-    def set_up_eval(self, archive: bool) -> dict:
-        """Because we are doing very similar evaluations for Archive and Live Data,
-        we are going to set up our data structures such that we can compute our evaluation
-        more easily. This function will (generally) be called twice, once with archive = True,
-        once with False
-
-        Parameters
-        ----------------
-        archive: bool
-            Whether this is setting up for Archive Data or Live Data"""
-        pvIndices = dict()
-        for pv in self.pvs.keys():
-            curve = self.pvs[pv]
-            is_constant = isinstance(curve, FormulaCurveItem) and not curve.pvs
-
-            if is_constant:
-                pvIndices[pv] = 0
-            else:
-                pv_current_index = 0
-                if archive:
-                    pv_times = curve.archive_data_buffer[0]
-                    while pv_current_index < len(pv_times) - 1 and pv_times[pv_current_index] < self.min_archiver_x():
-                        pv_current_index += 1
-                else:
-                    pv_times = curve.data_buffer[0]
-                    while pv_current_index < len(pv_times) - 1 and pv_times[pv_current_index] < self.min_x():
-                        pv_current_index += 1
-                pvIndices[pv] = pv_current_index
-        return pvIndices
-
-    def compute_evaluation(
-        self, formula: str, pvData: dict, pvValues: dict, pvIndices: dict, archive: bool
-    ) -> np.ndarray:
-        """This is where the actual computation takes place. We are going to go through
-        the data step by step and calculate our formula at each timestamp available.
-
-        Parameters
-        ----------
-        formula: str
-            The formula to compute
-        pvData: dict
-            A dictionary containing all of the Archive or Live data for each curve
-        pvValues: dict
-            The value of each curve at the current timestep. At the start of this function,
-            each is set to their respective last seen values when the time is equal to the
-            latest start time of all of the curves.
-        pvIndices: dict
-            A dictionary storing where in each curve's data buffer we are currently at while calculating
-        archive: bool
-            Whether or not this is computing for the Archive or for Live
-
-        Returns
-        -------
-        output: np.ndarray
-            formula curve data
-        """
-        output = np.zeros((2, 0), order="f", dtype=float)
-
-        constant_curves = set()
-        for pv in self.pvs.keys():
-            curve = self.pvs[pv]
-            if isinstance(curve, FormulaCurveItem) and not curve.pvs:
-                constant_curves.add(pv)
-                if archive and curve.archive_points_accumulated > 0:
-                    pvValues[pv] = curve.archive_data_buffer[1][0]
-                elif not archive and curve.points_accumulated > 0:
-                    pvValues[pv] = curve.data_buffer[1][0]
-                else:
-                    pvValues[pv] = 0
-
-        while True:
-            if archive:
-                self.archive_points_accumulated += 1
-            else:
-                self.points_accumulated += 1
-
-            minPV = None
-            current_time = 0
-            min_pv_current_index = 0
-
-            for pv in self.pvs.keys():
-                if pv in constant_curves:
-                    continue
-
-                pv_times = pvData[pv][0]
-                pv_current_index = pvIndices[pv]
-
-                if pv_current_index >= len(pv_times):
-                    continue
-
-                if minPV is None or pv_times[pv_current_index] < current_time:
-                    minPV = pv
-                    current_time = pv_times[pv_current_index]
-                    min_pv_current_index = pv_current_index
-
-            if minPV is None:
-                break
-
-            pvValues[minPV] = pvData[minPV][1][min_pv_current_index]
-
-            try:
-                formula_value = eval(formula)
-            except (ValueError, ZeroDivisionError, OverflowError):
-                logger.warning("Formula evaluation failed")
-                formula_value = 0
-
-            temp = np.array([[current_time], [formula_value]])
-            output = np.append(output, temp, axis=1)
-
-            pvIndices[minPV] += 1
-
-            if pvIndices[minPV] >= len(pvData[minPV][0]):
-                break
-
-        return output
-
-    @Slot()
-    def redrawCurve(self, min_x=None, max_x=None) -> None:
-        """Redraw the curve with any new data added since the last draw call."""
-        self.evaluate()
-        try:
-            archive_x = self.archive_data_buffer[0, -self.archive_points_accumulated :].astype(float)
-            archive_y = self.archive_data_buffer[1, -self.archive_points_accumulated :].astype(float)
-            live_x = self.data_buffer[0, -self.points_accumulated :].astype(float)
-            live_y = self.data_buffer[1, -self.points_accumulated :].astype(float)
-            x = np.concatenate((archive_x, live_x))
-            y = np.concatenate((archive_y, live_y))
-
-            if len(x) > 0:
-                valid_mask = x > 0
-                x = x[valid_mask]
-                y = y[valid_mask]
-
-                # Remove near-duplicate timestamps
-                if len(x) > 1:
-                    sort_indices = np.argsort(x)
-                    x_sorted = x[sort_indices]
-                    y_sorted = y[sort_indices]
-
-                    x_diff = np.diff(x_sorted)
-                    significant_diff = np.concatenate(([True], x_diff > 0.001))
-
-                    x = x_sorted[significant_diff]
-                    y = y_sorted[significant_diff]
-
-            self.setData(y=y, x=x)
-        except (ZeroDivisionError, OverflowError, TypeError):
-            pass
-
-    def connection_status_check(self):
-        """Check the connection status of all live and archive curves. Save and
-        emit any changes.
-        """
-        connected = all(self.live_connections.values())
-        self.connected = connected
-        self.live_channel_connection.emit(self.connected)
-
-        connected = all(self.arch_connections.values())
-        self.arch_connected = connected
-        self.archive_channel_connection.emit(self.arch_connected)
-
-    @Slot(bool)
-    def live_conn_change(self, status: bool) -> None:
-        """Capture the live channel connection status of a given curve and
-        check connection status
-
-        Parameters
-        ----------
-        status : bool
-            Live connection status for a given curve
-        """
-        curve = self.sender()
-        self.live_connections[curve] = status
-        self.connection_status_check()
-
-    @Slot(bool)
-    def arch_conn_change(self, status: bool) -> None:
-        """Capture the archive channel connection status of a given curve and
-        check connection status
-
-        Parameters
-        ----------
-        status : bool
-            Archive connection status for a given curve
-        """
-        curve = self.sender()
-        self.arch_connections[curve] = status
-        self.connection_status_check()
-
-    @Slot()
-    def on_dependency_archive_data_received(self):
-        """Called when any dependency curve receives new archive data"""
-        if self.use_archive_data and self.pvs:
-            # Use a timer to batch updates if multiple dependencies update at once
-            if not hasattr(self, "_update_timer"):
-                self._update_timer = QTimer()
-                self._update_timer.timeout.connect(self._delayed_update)
-                self._update_timer.setSingleShot(True)
-
-            self._update_timer.stop()
-            self._update_timer.start(50)  # 50ms delay to batch updates
-
-    @Slot()
-    def on_dependency_data_changed(self):
-        """Called when any dependency curve's data changes (live or archive)"""
-        if self.pvs:
-            if not hasattr(self, "_update_timer"):
-                self._update_timer = QTimer()
-                self._update_timer.timeout.connect(self._delayed_update)
-                self._update_timer.setSingleShot(True)
-
-            self._update_timer.stop()
-            self._update_timer.start(50)
-
-    def _delayed_update(self):
-        """Perform the actual update after batching signals"""
-        self.evaluate()
-        self.redrawCurve()
-
-        # Emit our own archive data received signal to propagate to dependent formulas
-        if self.archive_points_accumulated > 0:
-            self.archive_data_received_signal.emit()
-
-    def getBufferSize(self):
-        return self._bufferSize
-
-    def initializeArchiveBuffer(self) -> None:
-        """
-        Initialize the archive data buffer used for this curve.
-        """
-        self.archive_data_buffer = np.zeros((2, self._archiveBufferSize), order="f", dtype=float)
-
-    def getArchiveBufferSize(self) -> int:
-        """Return the length of the archive buffer"""
-        return int(self._archiveBufferSize)
-
-    def setArchiveBufferSize(self, value: int) -> None:
-        """Set the length of the archive data buffer and zero it out"""
-        if self._archiveBufferSize != int(value):
-            self._archiveBufferSize = max(int(value), 2)
-            self.initializeArchiveBuffer()
-
-    def resetArchiveBufferSize(self) -> None:
-        """Reset the length of the archive buffer back to the default and zero it out"""
-        if self._archiveBufferSize != DEFAULT_ARCHIVE_BUFFER_SIZE:
-            self._archiveBufferSize = DEFAULT_ARCHIVE_BUFFER_SIZE
-            self.initializeArchiveBuffer()
-
-    def max_x(self):
-        if not self.pvs:
-            if self.points_accumulated > 0:
-                return float(self.data_buffer[0, -1])
-            if self.archive_points_accumulated > 0:
-                return float(self.archive_data_buffer[0, -1])
-            return time.time()
-        maxx = APPROX_SECONDS_300_YEARS
-        for curve in self.pvs.keys():
-            maxx = min(self.pvs[curve].max_x(), maxx)
-        return maxx
-
-    def min_x(self):
-        if not self.pvs:
-            if self.archive_points_accumulated > 0:
-                return float(self.archive_data_buffer[0, 0])
-            if self.points_accumulated > 0:
-                return float(self.data_buffer[0, 0])
-            return time.time() - DEFAULT_TIME_SPAN
-        minx = 0.0
-        for curve in self.pvs.keys():
-            minx = max(self.pvs[curve].min_x(), minx)
-        return minx
-
-    def min_archiver_x(self):
-        """
-        Provide the the oldest valid timestamp from the archiver data buffer.
-
-        Returns
-        -------
-        float
-            The timestamp of the oldest data point in the archiver data buffer.
-        """
-        if not self.pvs:
-            if self.archive_points_accumulated > 0:
-                return float(self.archive_data_buffer[0, 0])
-            return time.time() - DEFAULT_TIME_SPAN
-        minx = 0.0
-        for curve in self.pvs.keys():
-            minx = max(self.pvs[curve].min_archiver_x(), minx)
-        return minx
-
-    def max_archiver_x(self):
-        """
-        Provide the the most recent timestamp from the archiver data buffer.
-        This is useful for scaling the x-axis.
-
-        Returns
-        -------
-        float
-            The timestamp of the most recent data point in the archiver data buffer.
-        """
-        if not self.pvs:
-            if self.archive_points_accumulated > 0:
-                return float(self.archive_data_buffer[0, -1])
-            return time.time()
-        maxx = APPROX_SECONDS_300_YEARS
-        for curve in self.pvs.keys():
-            maxx = min(self.pvs[curve].max_archiver_x(), maxx)
-        return maxx
-
-    def channels(self):
-        return [self.channel]
-
+    # Legacy attribute compatibility: old code may access .pvs (not ._pvs)
     @property
-    def address(self) -> str:
-        """Alias so tools expecting .address (like ArchivePlotCurveItem) work."""
-        return self._formula or ""
+    def pvs(self):
+        return self._pvs
 
-    @address.setter
-    def address(self, val: str) -> None:
-        self.formula = val
-
-    @property
-    def units(self) -> str:
-        if not self.pvs:
-            return ""
-        child_units = [getattr(curve, "units", "") or "" for curve in self.pvs.values()]
-        non_empty = [u for u in child_units if u]
-        if not non_empty:
-            return ""
-        first = non_empty[0]
-        return first if all(u == first for u in non_empty) else ""
-
-    @units.setter
-    def units(self, _value: str) -> None:
-        pass
+    @pvs.setter
+    def pvs(self, value):
+        self._pvs = value if value else {}
 
 
 class PyDMArchiverTimePlot(PyDMTimePlot):
@@ -1302,6 +1289,9 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
             min_x = self._min_x
         for curve in self._curves:
             processing_command = ""
+            # Skip computed curves — they derive data from dependencies, not the archiver
+            if hasattr(curve, "is_computed") and curve.is_computed:
+                continue
             if curve.use_archive_data:
                 if requested_max is None:  # If the caller didn't request a max, use the oldest data from the curve
                     max_x = curve.min_x()
@@ -1478,9 +1468,33 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
 
         return curve
 
-    def addFormulaChannel(self, yAxisName: str, **kwargs) -> FormulaCurveItem:
-        """Creates a FormulaCurveItem and links it to the given y axis"""
-        formula_curve = FormulaCurveItem(yAxisName=yAxisName, **kwargs)
+    def addFormulaChannel(self, yAxisName: str, **kwargs) -> ArchivePlotCurveItem:
+        """Creates a computed ArchivePlotCurveItem from a formula and links it to the given y axis.
+
+        Parameters
+        ----------
+        yAxisName : str
+            The name of the y-axis to link the curve to.
+        formula : str
+            The formula string (e.g. 'f://{A} + {B}').
+        pvs : dict
+            Dictionary mapping variable names to dependency curve items.
+        **kwargs
+            Additional keyword arguments passed to ArchivePlotCurveItem.
+
+        Returns
+        -------
+        ArchivePlotCurveItem
+            The newly created computed curve.
+        """
+        formula_curve = ArchivePlotCurveItem(
+            yAxisName=yAxisName,
+            formula=kwargs.pop("formula", None),
+            pvs=kwargs.pop("pvs", None),
+            useArchiveData=kwargs.pop("use_archive_data", True),
+            liveData=kwargs.pop("liveData", True),
+            **kwargs,
+        )
 
         self._curves.append(formula_curve)
         self.plotItem.linkDataToAxis(formula_curve, yAxisName)

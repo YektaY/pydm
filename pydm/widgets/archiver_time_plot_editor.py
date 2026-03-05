@@ -39,11 +39,10 @@ class PyDMArchiverTimePlotCurvesModel(BasePlotCurvesModel):
     def get_data(self, column_name: str, curve: BasePlotCurveItem) -> Any:
         """Get data for the input column name"""
         if column_name == "Channel":
-            if hasattr(curve, "address"):
-                return curve.address
-            elif hasattr(curve, "formula"):
+            if hasattr(curve, "is_computed") and curve.is_computed:
                 return curve.formula
-            # We are either a Formula or a PV (for now at leasts)
+            elif hasattr(curve, "address"):
+                return curve.address
             else:
                 return None
 
