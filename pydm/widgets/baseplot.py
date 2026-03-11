@@ -777,6 +777,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
         self.textItems = {}
         self.markerItems = {}
+        self.crosshair_label = None
         self.crosshair = False
         self.init_labels = False
 
@@ -826,10 +827,10 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         else:
             ret = PyDMPrimitiveWidget.eventFilter(self, obj, event)
 
-        if self.crosshair and hasattr(self, "textItems"):
+        if self.crosshair:
             if event.type() == QEvent.Leave:
-                for label in self.textItems.values():
-                    label.hide()
+                if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
+                    self.crosshair_label.hide()
                 if hasattr(self, "markerItems"):
                     for marker in self.markerItems.values():
                         marker.hide()
@@ -1609,6 +1610,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             self.crosshair = True
             self.textItems = {}
             self.markerItems = {}
+            self.crosshair_label = None
             self.init_label = True
             self.crosshair_position_updated.connect(self.updateLabel)
 
@@ -1643,31 +1645,30 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
-        Create a TextItem for each PlotDataItem in the plot and stores them in self.textItems.
+        Create a single consolidated crosshair label and per-curve markers.
 
         Returns
         -------
         None
         """
-        if not hasattr(self, "textItems"):
-            self.textItems = {}
         if not hasattr(self, "markerItems"):
             self.markerItems = {}
+
+        if not hasattr(self, "crosshair_label") or self.crosshair_label is None:
+            self.crosshair_label = TextItem(
+                text="", color="w", border=mkPen(color="w", width=2), fill=mkBrush(0, 0, 0, 150)
+            )
+            self.crosshair_label.setPos(0, 0)
+            self.crosshair_label.setAnchor((0, 0))
+            self.crosshair_label.setFont(QFont(font, font_size))
+            self.crosshair_label.setZValue(1001)
 
         for item in self.plotItem.listDataItems():
             if not isinstance(item, PlotDataItem):
                 continue
 
-            if item not in self.textItems:
-                label: TextItem = TextItem(
-                    text="No data", color="w", border=mkPen(color="w", width=2), fill=mkBrush(0, 0, 0, 150)
-                )
-
-                label.setPos(0, 0)
-                label.setAnchor((0.5, 1.0))
-                label.setFont(QFont(font, font_size))
-
-                self.textItems[item] = label
+            # Track curves so we know when new ones are added
+            self.textItems[item] = None
 
             if item not in self.markerItems:
                 curve_pen = item.opts.get("pen", mkPen("w"))
@@ -1688,27 +1689,20 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
     def clearCurveLabels(self) -> None:
         """
-        Remove all existing curve labels from the plot and clear the textItems dictionary.
-
-        This method iterates through all TextItem objects stored in the `textItems` attribute,
-        removes each one from the correct ViewBox, clears the dictionary, and sets the
-        `init_label` flag to True.
+        Remove the consolidated crosshair label, all markers, and clear tracking dicts.
 
         Returns
         -------
         None
         """
+        if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
+            self.crosshair_label.hide()
+            primary_vb = self.getViewBox()
+            if self.crosshair_label in primary_vb.addedItems:
+                primary_vb.removeItem(self.crosshair_label)
+            self.crosshair_label = None
+
         if hasattr(self, "textItems"):
-            for curve, label in self.textItems.items():
-                label.hide()
-
-                if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
-                    curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
-                    if label in curve_vb.addedItems:
-                        curve_vb.removeItem(label)
-                elif label in self.getViewBox().addedItems:
-                    self.getViewBox().removeItem(label)
-
             self.textItems.clear()
 
         if hasattr(self, "markerItems"):
@@ -1755,11 +1749,19 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         if self.init_label or len(self.plotItem.listDataItems()) != len(self.textItems):
             self.initializeCurveLabels()
 
-        for curve, label in self.textItems.items():
+        primary_vb = self.getViewBox()
+        if self.crosshair_label is not None and self.crosshair_label not in primary_vb.addedItems:
+            primary_vb.addItem(self.crosshair_label)
+
+        mouse_point_primary = primary_vb.mapSceneToView(QPointF(scene_x, scene_y))
+        label_x = mouse_point_primary.x()
+        label_lines = []
+        has_any_data = False
+
+        for curve in self.textItems:
             marker = self.markerItems.get(curve)
 
             if not curve.isVisible():
-                label.hide()
                 if marker is not None:
                     marker.hide()
                 continue
@@ -1767,10 +1769,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
                 curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
             else:
-                curve_vb = self.getViewBox()
+                curve_vb = primary_vb
 
-            if label not in curve_vb.addedItems:
-                curve_vb.addItem(label)
             if marker is not None and marker not in curve_vb.addedItems:
                 curve_vb.addItem(marker)
 
@@ -1786,12 +1786,10 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
                 or x_val < xData[0]
                 or x_val > xData[-1]
             ):
-                label.hide()
                 if marker is not None:
                     marker.hide()
                 continue
 
-            label.show()
             idx = np.searchsorted(xData, x_val, side="right") - 1
             idx = max(0, min(idx, len(yData) - 1))
 
@@ -1799,26 +1797,33 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             real_y = yData[idx]
 
             if not (np.isfinite(real_x) and np.isfinite(real_y)):
-                label.hide()
                 if marker is not None:
                     marker.hide()
                 continue
-            else:
-                label.show()
 
+            has_any_data = True
             x_str = self.getFormattedX(real_x)
             y_str = self.getFormattedY(real_y)
-            label.setText(f"x={x_str}\ny={y_str}")
-
-            # Offset label above the data point so it's not obscured by the crosshair and cursor
-            view_range = curve_vb.viewRange()
-            y_range = view_range[1][1] - view_range[1][0]
-            y_offset = y_range * 0.05
-            label.setPos(x_val, real_y + y_offset)
+            label_lines.append(f"x={x_str}  y={y_str}")
 
             if marker is not None:
                 marker.setData([real_x], [real_y])
                 marker.show()
+
+        if self.crosshair_label is not None:
+            if has_any_data:
+                self.crosshair_label.setText("\n".join(label_lines))
+
+                # Pin label to top-left corner of the view (fixed legend style)
+                view_range = primary_vb.viewRange()
+                x_min = view_range[0][0]
+                y_max = view_range[1][1]
+                x_padding = (view_range[0][1] - x_min) * 0.01
+                y_padding = (y_max - view_range[1][0]) * 0.01
+                self.crosshair_label.setPos(x_min + x_padding, y_max - y_padding)
+                self.crosshair_label.show()
+            else:
+                self.crosshair_label.hide()
 
     def getFormattedX(self, real_x: float) -> str:
         """

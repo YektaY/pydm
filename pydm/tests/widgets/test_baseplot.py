@@ -399,19 +399,22 @@ class DummyPlotItem:
 
 class DummyWidget:
     def __init__(self):
-        self.textItems = {}  # Maps curves to labels.
+        self.textItems = {}  # Maps curves -> None (tracking only).
         self.markerItems = {}
+        self.crosshair_label = None
         self.init_label = False
         self.crosshair = True
+        self._viewbox = DummyViewBox(mapped_x=2.3)
         self.plotItem = DummyPlotItem()
 
     def clearCurveLabels(self) -> None:
         """
-        Remove all existing curve labels from the plot and clear the textItems dictionary.
+        Remove the consolidated label, all markers, and clear tracking dicts.
         """
+        if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
+            self.crosshair_label.hide()
+            self.crosshair_label = None
         if hasattr(self, "textItems"):
-            for label in list(self.textItems.values()):
-                self.plotItem.removeItem(label)
             self.textItems.clear()
         if hasattr(self, "markerItems"):
             self.markerItems.clear()
@@ -419,32 +422,29 @@ class DummyWidget:
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
-        Create a TextItem for each PlotDataItem in the plot and stores them in self.textItems.
+        Create a single consolidated crosshair label and per-curve tracking.
         """
-        self.clearCurveLabels()
-        self.init_label = False
+        if self.crosshair_label is None:
+            self.crosshair_label = DummyTextItem(text="", color="w", border="dummy_pen", fill="dummy_brush")
+            self.crosshair_label.setPos(0, 0)
+            self.crosshair_label.setAnchor((0, 0))
+            self.crosshair_label.setFont(QFont(font, font_size))
 
+        self.init_label = False
         for item in self.plotItem.listDataItems():
             if not isinstance(item, DummyPlotDataItem):
                 continue
-
-            label = DummyTextItem(text="No data", color="w", border="dummy_pen", fill="dummy_brush")
-
-            label.setPos(0, 0)
-            label.setAnchor((0.5, 1.0))
-            label.setFont(QFont(font, font_size))
-
-            self.textItems[item] = label
+            self.textItems[item] = None
 
     def getViewBox(self):
         """
         Return a dummy view box for use in updateLabel.
         """
-        return DummyViewBox(mapped_x=2.3)
+        return self._viewbox
 
     def updateLabel(self, scene_x: float, scene_y: float) -> None:
         """
-        Update the label for each curve based on the scene coordinates.
+        Update the consolidated label for all curves based on scene coordinates.
         """
         if not self.crosshair:
             return
@@ -453,14 +453,18 @@ class DummyWidget:
             self.initializeCurveLabels()
             self.init_label = False
 
-        for curve, label in self.textItems.items():
+        primary_vb = self.getViewBox()
+        mouse_point_primary = primary_vb.mapSceneToView(QPointF(scene_x, scene_y))
+        label_x = mouse_point_primary.x()
+        label_lines = []
+        has_any_data = False
+
+        for curve in self.textItems:
             if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
                 curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
             else:
-                curve_vb = self.getViewBox()
+                curve_vb = primary_vb
 
-            if label not in curve_vb.addedItems:
-                curve_vb.addItem(label)
             mouse_point_in_curve_vb = curve_vb.mapSceneToView(QPointF(scene_x, scene_y))
             x_val = mouse_point_in_curve_vb.x()
 
@@ -473,29 +477,34 @@ class DummyWidget:
                 or x_val < xData[0]
                 or x_val > xData[-1]
             ):
-                label.hide()
                 continue
 
-            label.show()
             idx = np.searchsorted(xData, x_val, side="right") - 1
             idx = max(0, min(idx, len(yData) - 1))
             real_x = xData[idx]
             real_y = yData[idx]
 
             if not (np.isfinite(real_x) and np.isfinite(real_y)):
-                label.hide()
                 continue
-            else:
-                label.show()
 
+            has_any_data = True
             x_str = f"{real_x:.2f}"
             y_str = f"{real_y:.2f}"
-            label.setText(f"x={x_str}\ny={y_str}")
+            label_lines.append(f"x={x_str}  y={y_str}")
 
-            view_range = curve_vb.viewRange()
-            y_range = view_range[1][1] - view_range[1][0]
-            y_offset = y_range * 0.05
-            label.setPos(x_val, real_y + y_offset)
+        if self.crosshair_label is not None:
+            if has_any_data:
+                self.crosshair_label.setText("\n".join(label_lines))
+
+                view_range = primary_vb.viewRange()
+                x_min = view_range[0][0]
+                y_max = view_range[1][1]
+                x_padding = (view_range[0][1] - x_min) * 0.01
+                y_padding = (y_max - view_range[1][0]) * 0.01
+                self.crosshair_label.setPos(x_min + x_padding, y_max - y_padding)
+                self.crosshair_label.show()
+            else:
+                self.crosshair_label.hide()
 
     def getFormattedX(self, real_x: float) -> str:
         """
@@ -517,32 +526,28 @@ def test_initializeCurveLabels():
 
     widget.initializeCurveLabels(font="Times", font_size=10)
 
+    # Valid item is tracked, invalid item is not
     assert valid_item in widget.textItems
     assert invalid_item not in widget.textItems
 
-    label = widget.textItems[valid_item]
+    # Consolidated label is created with correct anchor
+    label = widget.crosshair_label
+    assert label is not None
     assert label._pos == (0, 0)
-    assert label._anchor == (0.5, 1.0)
+    assert label._anchor == (0, 0)
     assert isinstance(label._font, QFont)
     assert label._font.family() == "Times"
     assert label._font.pointSize() == 10
 
 
-def test_clearCurveLabels(monkeypatch):
+def test_clearCurveLabels():
     widget = DummyWidget()
+    widget.crosshair_label = DummyTextItem("test", "w", "dummy_pen", "dummy_brush")
     dummy_item = DummyPlotDataItem()
-    dummy_label = DummyTextItem("No data", "w", "dummy_pen", "dummy_brush")
-    widget.textItems = {dummy_item: dummy_label}
-
-    remove_calls = []
-
-    def fake_remove(item):
-        remove_calls.append(item)
-
-    monkeypatch.setattr(widget.plotItem, "removeItem", fake_remove)
+    widget.textItems = {dummy_item: None}
 
     widget.clearCurveLabels()
-    assert dummy_label in remove_calls
+    assert widget.crosshair_label is None
     assert widget.textItems == {}
     assert widget.init_label is True
 
@@ -550,9 +555,10 @@ def test_clearCurveLabels(monkeypatch):
 def test_updateLabel_valid():
     """
     Test updateLabel with a dummy curve that returns valid data.
+    The consolidated label should show data for the curve.
     """
     widget = DummyWidget()
-    widget.init_label = False  # So that initializeCurveLabels is not re-called.
+    widget.init_label = False
 
     class DummyCurve:
         def __init__(self, xData, yData):
@@ -563,20 +569,48 @@ def test_updateLabel_valid():
             return self._xData, self._yData
 
     curve = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
-    label = DummyTextItem("No data", "w", "dummy_pen", "dummy_brush")
-    widget.textItems = {curve: label}
+    widget.textItems = {curve: None}
+    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
 
     # When getViewBox() is called, our dummy view box returns x_val = 2.3.
     widget.updateLabel(100.0, 200.0)
 
     # For x_val = 2.3, np.searchsorted([0,1,2,3], 2.3, side="right") returns 3;
     # subtracting 1 gives index 2. Thus, real_x should be 2 and real_y should be 30.
-    # Label is offset above by 5% of y-range (default view_range [0,100] -> offset=5).
-    expected_text = "x=2.00\ny=30.00"
-    expected_pos = (2.3, 35.0)
-    assert label._text == expected_text
-    assert label._pos == expected_pos
-    assert label.visible is True
+    expected_text = "x=2.00  y=30.00"
+    assert widget.crosshair_label._text == expected_text
+    assert widget.crosshair_label.visible is True
+    # Label is positioned to the upper-right of the crosshair
+    assert widget.crosshair_label._pos is not None
+
+
+def test_updateLabel_multiple_curves():
+    """
+    Test updateLabel with multiple curves produces a single consolidated label.
+    """
+    widget = DummyWidget()
+    widget.init_label = False
+
+    class DummyCurve:
+        def __init__(self, xData, yData):
+            self._xData = xData
+            self._yData = yData
+
+        def getData(self):
+            return self._xData, self._yData
+
+    curve1 = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
+    curve2 = DummyCurve(np.array([0, 1, 2, 3]), np.array([100, 200, 300, 400]))
+    widget.textItems = {curve1: None, curve2: None}
+    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
+
+    widget.updateLabel(100.0, 200.0)
+
+    # Both curves' data should appear in the label text
+    label_text = widget.crosshair_label._text
+    assert "x=2.00  y=30.00" in label_text
+    assert "x=2.00  y=300.00" in label_text
+    assert widget.crosshair_label.visible is True
 
 
 def test_updateLabel_invalid_data():
@@ -592,12 +626,12 @@ def test_updateLabel_invalid_data():
             return np.array([]), np.array([])
 
     curve = DummyCurve()
-    label = DummyTextItem("No data", "w", "dummy_pen", "dummy_brush")
-    widget.textItems = {curve: label}
+    widget.textItems = {curve: None}
+    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
 
     widget.updateLabel(100.0, 200.0)
     # Since the data arrays are empty, the label should be hidden.
-    assert label.visible is False
+    assert widget.crosshair_label.visible is False
 
 
 def test_updateLabel_crosshair_disabled():
@@ -617,13 +651,12 @@ def test_updateLabel_crosshair_disabled():
             return self._xData, self._yData
 
     curve = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
-    label = DummyTextItem("No data", "w", "dummy_pen", "dummy_brush")
-    widget.textItems = {curve: label}
+    widget.textItems = {curve: None}
+    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
 
     widget.updateLabel(100.0, 200.0)
     # Label should remain unchanged since crosshair is disabled.
-    assert label._text == "No data"
-    assert label._pos is None
+    assert widget.crosshair_label._text == ""
 
 
 def test_getFormattedX():

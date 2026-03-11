@@ -358,15 +358,26 @@ class BasePlotDummy:
 class TimePlotDummy(BasePlotDummy):
     def __init__(self):
         self.textItems = {}
+        self.crosshair_label = None
         self.parent_called = False
 
     def updateLabel(self, x_val: float, y_val: float) -> None:
         super().updateLabel(x_val, y_val)
 
-        for curve, label in self.textItems.items():
-            if getattr(curve, "severity_raw", -1) != -1:
-                old_text = label.toPlainText()
-                label.setText(old_text + "\n" + str(curve.severity))
+        if self.crosshair_label is not None and self.crosshair_label.isVisible():
+            has_severity = False
+            for curve in self.textItems:
+                if getattr(curve, "severity_raw", -1) != -1:
+                    has_severity = True
+                    break
+            if has_severity:
+                old_text = self.crosshair_label.toPlainText()
+                severity_lines = []
+                for curve in self.textItems:
+                    if getattr(curve, "severity_raw", -1) != -1:
+                        severity_lines.append(str(curve.severity))
+                if severity_lines:
+                    self.crosshair_label.setText(old_text + "\n" + "\n".join(severity_lines))
 
 
 def test_updateLabel():
@@ -379,18 +390,17 @@ def test_updateLabel():
     curve_without_severity = MagicMock()
     curve_without_severity.severity_raw = -1
 
-    label1 = MagicMock()
-    label1.toPlainText.return_value = "Curve1"
-    label2 = MagicMock()
-    label2.toPlainText.return_value = "Curve2"
+    crosshair_label = MagicMock()
+    crosshair_label.isVisible.return_value = True
+    crosshair_label.toPlainText.return_value = "x=10:00:00  y=1.23"
 
+    instance.crosshair_label = crosshair_label
     instance.textItems = {
-        curve_with_severity: label1,
-        curve_without_severity: label2,
+        curve_with_severity: None,
+        curve_without_severity: None,
     }
 
     instance.updateLabel(10.0, 20.0)
 
     assert instance.parent_called, "Parent's updateLabel was not called."
-    label1.setText.assert_called_once_with("Curve1\nHIGH")
-    label2.setText.assert_not_called()
+    crosshair_label.setText.assert_called_once_with("x=10:00:00  y=1.23\nHIGH")
