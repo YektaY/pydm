@@ -1231,20 +1231,15 @@ class PyDMTimePlot(BasePlot):
         """
         super().updateLabel(x_val, y_val)
 
-        if self.crosshair_label is not None and self.crosshair_label.isVisible():
-            has_severity = False
-            for curve in self.textItems:
-                if getattr(curve, "severity_raw", -1) != -1:
-                    has_severity = True
-                    break
-            if has_severity:
-                old_text = self.crosshair_label.toPlainText()
-                severity_lines = []
-                for curve in self.textItems:
-                    if getattr(curve, "severity_raw", -1) != -1:
-                        severity_lines.append(str(curve.severity))
-                if severity_lines:
-                    self.crosshair_label.setText(old_text + "\n" + "\n".join(severity_lines))
+        # Append severity info per-curve to the legend entry
+        if self._legend is None:
+            return
+        for curve in self.textItems:
+            if getattr(curve, "severity_raw", -1) != -1:
+                legend_label = self._legend.getLabel(curve)
+                if legend_label is not None:
+                    old_text = legend_label.text
+                    legend_label.setText(f"{old_text}  {curve.severity}")
 
     def getFormattedX(self, real_x: float) -> str:
         """

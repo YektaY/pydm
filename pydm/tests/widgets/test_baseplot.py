@@ -369,6 +369,29 @@ class DummyViewBox:
         return dummy
 
 
+class DummyLabelItem:
+    """A dummy label item simulating pyqtgraph's LabelItem in legend entries."""
+
+    def __init__(self, text=""):
+        self.text = text
+
+    def setText(self, text):
+        self.text = text
+
+
+class DummyLegend:
+    """A dummy legend simulating pyqtgraph's LegendItem."""
+
+    def __init__(self):
+        self._labels = {}  # Maps item -> DummyLabelItem
+
+    def addItem(self, item, name):
+        self._labels[item] = DummyLabelItem(name)
+
+    def getLabel(self, item):
+        return self._labels.get(item)
+
+
 class DummyPlotItem:
     """
     A dummy plot item that provides:
@@ -401,40 +424,39 @@ class DummyWidget:
     def __init__(self):
         self.textItems = {}  # Maps curves -> None (tracking only).
         self.markerItems = {}
-        self.crosshair_label = None
+        self._original_legend_labels = {}
         self.init_label = False
         self.crosshair = True
         self._viewbox = DummyViewBox(mapped_x=2.3)
+        self._legend = DummyLegend()
         self.plotItem = DummyPlotItem()
 
     def clearCurveLabels(self) -> None:
         """
-        Remove the consolidated label, all markers, and clear tracking dicts.
+        Restore legend labels, remove markers, and clear tracking dicts.
         """
-        if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
-            self.crosshair_label.hide()
-            self.crosshair_label = None
+        self._restoreLegendLabels()
         if hasattr(self, "textItems"):
             self.textItems.clear()
         if hasattr(self, "markerItems"):
             self.markerItems.clear()
+        if hasattr(self, "_original_legend_labels"):
+            self._original_legend_labels.clear()
         self.init_label = True
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
-        Create a single consolidated crosshair label and per-curve tracking.
+        Store original legend text for each curve.
         """
-        if self.crosshair_label is None:
-            self.crosshair_label = DummyTextItem(text="", color="w", border="dummy_pen", fill="dummy_brush")
-            self.crosshair_label.setPos(0, 0)
-            self.crosshair_label.setAnchor((0, 0))
-            self.crosshair_label.setFont(QFont(font, font_size))
-
         self.init_label = False
         for item in self.plotItem.listDataItems():
             if not isinstance(item, DummyPlotDataItem):
                 continue
             self.textItems[item] = None
+            if item not in self._original_legend_labels and self._legend is not None:
+                legend_label = self._legend.getLabel(item)
+                if legend_label is not None:
+                    self._original_legend_labels[item] = legend_label.text
 
     def getViewBox(self):
         """
@@ -444,7 +466,7 @@ class DummyWidget:
 
     def updateLabel(self, scene_x: float, scene_y: float) -> None:
         """
-        Update the consolidated label for all curves based on scene coordinates.
+        Update legend entries with crosshair data for each curve.
         """
         if not self.crosshair:
             return
@@ -454,12 +476,10 @@ class DummyWidget:
             self.init_label = False
 
         primary_vb = self.getViewBox()
-        mouse_point_primary = primary_vb.mapSceneToView(QPointF(scene_x, scene_y))
-        label_x = mouse_point_primary.x()
-        label_lines = []
-        has_any_data = False
 
         for curve in self.textItems:
+            original_name = self._original_legend_labels.get(curve, "")
+
             if hasattr(curve, "y_axis_name") and curve.y_axis_name in self.plotItem.axes:
                 curve_vb = self.plotItem.getViewBoxForAxis(curve.y_axis_name)
             else:
@@ -477,6 +497,7 @@ class DummyWidget:
                 or x_val < xData[0]
                 or x_val > xData[-1]
             ):
+                self._setLegendLabel(curve, original_name)
                 continue
 
             idx = np.searchsorted(xData, x_val, side="right") - 1
@@ -485,26 +506,27 @@ class DummyWidget:
             real_y = yData[idx]
 
             if not (np.isfinite(real_x) and np.isfinite(real_y)):
+                self._setLegendLabel(curve, original_name)
                 continue
 
-            has_any_data = True
             x_str = f"{real_x:.2f}"
             y_str = f"{real_y:.2f}"
-            label_lines.append(f"x={x_str}  y={y_str}")
+            self._setLegendLabel(curve, f"{original_name}<br>x={x_str}  y={y_str}")
 
-        if self.crosshair_label is not None:
-            if has_any_data:
-                self.crosshair_label.setText("\n".join(label_lines))
+    def _setLegendLabel(self, curve, text: str) -> None:
+        if self._legend is None:
+            return
+        legend_label = self._legend.getLabel(curve)
+        if legend_label is not None:
+            legend_label.setText(text)
 
-                view_range = primary_vb.viewRange()
-                x_min = view_range[0][0]
-                y_max = view_range[1][1]
-                x_padding = (view_range[0][1] - x_min) * 0.01
-                y_padding = (y_max - view_range[1][0]) * 0.01
-                self.crosshair_label.setPos(x_min + x_padding, y_max - y_padding)
-                self.crosshair_label.show()
-            else:
-                self.crosshair_label.hide()
+    def _restoreLegendLabels(self) -> None:
+        if not hasattr(self, "_original_legend_labels") or self._legend is None:
+            return
+        for curve, original_text in self._original_legend_labels.items():
+            legend_label = self._legend.getLabel(curve)
+            if legend_label is not None:
+                legend_label.setText(original_text)
 
     def getFormattedX(self, real_x: float) -> str:
         """
@@ -524,38 +546,41 @@ def test_initializeCurveLabels():
     invalid_item = "not a data item"
     widget.plotItem._data_items = [valid_item, invalid_item]
 
+    # Add valid_item to legend so initializeCurveLabels can save original text
+    widget._legend.addItem(valid_item, "TestCurve")
+
     widget.initializeCurveLabels(font="Times", font_size=10)
 
     # Valid item is tracked, invalid item is not
     assert valid_item in widget.textItems
     assert invalid_item not in widget.textItems
 
-    # Consolidated label is created with correct anchor
-    label = widget.crosshair_label
-    assert label is not None
-    assert label._pos == (0, 0)
-    assert label._anchor == (0, 0)
-    assert isinstance(label._font, QFont)
-    assert label._font.family() == "Times"
-    assert label._font.pointSize() == 10
+    # Original legend text is saved
+    assert valid_item in widget._original_legend_labels
+    assert widget._original_legend_labels[valid_item] == "TestCurve"
 
 
 def test_clearCurveLabels():
     widget = DummyWidget()
-    widget.crosshair_label = DummyTextItem("test", "w", "dummy_pen", "dummy_brush")
     dummy_item = DummyPlotDataItem()
+    widget._legend.addItem(dummy_item, "OriginalName")
     widget.textItems = {dummy_item: None}
+    widget._original_legend_labels = {dummy_item: "OriginalName"}
+
+    # Simulate that legend was updated with crosshair data
+    widget._legend.getLabel(dummy_item).setText("OriginalName<br>x=1.00  y=2.00")
 
     widget.clearCurveLabels()
-    assert widget.crosshair_label is None
+    # Legend text should be restored to original
+    assert widget._legend.getLabel(dummy_item).text == "OriginalName"
     assert widget.textItems == {}
+    assert widget._original_legend_labels == {}
     assert widget.init_label is True
 
 
 def test_updateLabel_valid():
     """
-    Test updateLabel with a dummy curve that returns valid data.
-    The consolidated label should show data for the curve.
+    Test updateLabel with valid data updates the legend entry.
     """
     widget = DummyWidget()
     widget.init_label = False
@@ -569,24 +594,23 @@ def test_updateLabel_valid():
             return self._xData, self._yData
 
     curve = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
+    widget._legend.addItem(curve, "MyCurve")
     widget.textItems = {curve: None}
-    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
+    widget._original_legend_labels = {curve: "MyCurve"}
 
     # When getViewBox() is called, our dummy view box returns x_val = 2.3.
     widget.updateLabel(100.0, 200.0)
 
     # For x_val = 2.3, np.searchsorted([0,1,2,3], 2.3, side="right") returns 3;
     # subtracting 1 gives index 2. Thus, real_x should be 2 and real_y should be 30.
-    expected_text = "x=2.00  y=30.00"
-    assert widget.crosshair_label._text == expected_text
-    assert widget.crosshair_label.visible is True
-    # Label is positioned to the upper-right of the crosshair
-    assert widget.crosshair_label._pos is not None
+    legend_text = widget._legend.getLabel(curve).text
+    assert "MyCurve" in legend_text
+    assert "x=2.00  y=30.00" in legend_text
 
 
 def test_updateLabel_multiple_curves():
     """
-    Test updateLabel with multiple curves produces a single consolidated label.
+    Test updateLabel with multiple curves updates each legend entry independently.
     """
     widget = DummyWidget()
     widget.init_label = False
@@ -601,22 +625,26 @@ def test_updateLabel_multiple_curves():
 
     curve1 = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
     curve2 = DummyCurve(np.array([0, 1, 2, 3]), np.array([100, 200, 300, 400]))
+    widget._legend.addItem(curve1, "Curve1")
+    widget._legend.addItem(curve2, "Curve2")
     widget.textItems = {curve1: None, curve2: None}
-    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
+    widget._original_legend_labels = {curve1: "Curve1", curve2: "Curve2"}
 
     widget.updateLabel(100.0, 200.0)
 
-    # Both curves' data should appear in the label text
-    label_text = widget.crosshair_label._text
-    assert "x=2.00  y=30.00" in label_text
-    assert "x=2.00  y=300.00" in label_text
-    assert widget.crosshair_label.visible is True
+    # Each curve's legend entry should have its own data
+    legend1_text = widget._legend.getLabel(curve1).text
+    legend2_text = widget._legend.getLabel(curve2).text
+    assert "Curve1" in legend1_text
+    assert "y=30.00" in legend1_text
+    assert "Curve2" in legend2_text
+    assert "y=300.00" in legend2_text
 
 
 def test_updateLabel_invalid_data():
     """
     Test updateLabel with a curve that returns empty data.
-    The label should be hidden.
+    The legend entry should show only the original name.
     """
     widget = DummyWidget()
     widget.init_label = False
@@ -626,12 +654,13 @@ def test_updateLabel_invalid_data():
             return np.array([]), np.array([])
 
     curve = DummyCurve()
+    widget._legend.addItem(curve, "EmptyCurve")
     widget.textItems = {curve: None}
-    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
+    widget._original_legend_labels = {curve: "EmptyCurve"}
 
     widget.updateLabel(100.0, 200.0)
-    # Since the data arrays are empty, the label should be hidden.
-    assert widget.crosshair_label.visible is False
+    # Since the data arrays are empty, legend should show only the original name
+    assert widget._legend.getLabel(curve).text == "EmptyCurve"
 
 
 def test_updateLabel_crosshair_disabled():
@@ -651,12 +680,34 @@ def test_updateLabel_crosshair_disabled():
             return self._xData, self._yData
 
     curve = DummyCurve(np.array([0, 1, 2, 3]), np.array([10, 20, 30, 40]))
+    widget._legend.addItem(curve, "MyCurve")
     widget.textItems = {curve: None}
-    widget.crosshair_label = DummyTextItem("", "w", "dummy_pen", "dummy_brush")
+    widget._original_legend_labels = {curve: "MyCurve"}
 
     widget.updateLabel(100.0, 200.0)
-    # Label should remain unchanged since crosshair is disabled.
-    assert widget.crosshair_label._text == ""
+    # Legend should remain unchanged since crosshair is disabled.
+    assert widget._legend.getLabel(curve).text == "MyCurve"
+
+
+def test_restoreLegendLabels():
+    """
+    Test that _restoreLegendLabels restores original legend text.
+    """
+    widget = DummyWidget()
+
+    class DummyCurve:
+        pass
+
+    curve = DummyCurve()
+    widget._legend.addItem(curve, "OrigName")
+    widget._original_legend_labels = {curve: "OrigName"}
+
+    # Simulate crosshair update
+    widget._legend.getLabel(curve).setText("OrigName<br>x=1.00  y=2.00")
+    assert "x=1.00" in widget._legend.getLabel(curve).text
+
+    widget._restoreLegendLabels()
+    assert widget._legend.getLabel(curve).text == "OrigName"
 
 
 def test_getFormattedX():

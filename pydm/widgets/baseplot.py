@@ -777,7 +777,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
         self.textItems = {}
         self.markerItems = {}
-        self.crosshair_label = None
+        self._original_legend_labels = {}
         self.crosshair = False
         self.init_labels = False
 
@@ -829,8 +829,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
         if self.crosshair:
             if event.type() == QEvent.Leave:
-                if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
-                    self.crosshair_label.hide()
+                self._restoreLegendLabels()
                 if hasattr(self, "markerItems"):
                     for marker in self.markerItems.values():
                         marker.hide()
@@ -1610,7 +1609,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             self.crosshair = True
             self.textItems = {}
             self.markerItems = {}
-            self.crosshair_label = None
+            self._original_legend_labels = {}
             self.init_label = True
             self.crosshair_position_updated.connect(self.updateLabel)
 
@@ -1645,7 +1644,11 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
     def initializeCurveLabels(self, font: str = "arial", font_size: int = 8) -> None:
         """
-        Create a single consolidated crosshair label and per-curve markers.
+        Store original legend text for each curve and create per-curve markers.
+
+        When the crosshair is active, the legend entries are updated with data values.
+        The original legend text is saved so it can be restored when the crosshair
+        is disabled or the mouse leaves the plot area.
 
         Returns
         -------
@@ -1653,15 +1656,8 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
         """
         if not hasattr(self, "markerItems"):
             self.markerItems = {}
-
-        if not hasattr(self, "crosshair_label") or self.crosshair_label is None:
-            self.crosshair_label = TextItem(
-                text="", color="w", border=mkPen(color="w", width=2), fill=mkBrush(0, 0, 0, 150)
-            )
-            self.crosshair_label.setPos(0, 0)
-            self.crosshair_label.setAnchor((0, 0))
-            self.crosshair_label.setFont(QFont(font, font_size))
-            self.crosshair_label.setZValue(1001)
+        if not hasattr(self, "_original_legend_labels"):
+            self._original_legend_labels = {}
 
         for item in self.plotItem.listDataItems():
             if not isinstance(item, PlotDataItem):
@@ -1669,6 +1665,12 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
             # Track curves so we know when new ones are added
             self.textItems[item] = None
+
+            # Save original legend text for restoration later
+            if item not in self._original_legend_labels and self._legend is not None:
+                legend_label = self._legend.getLabel(item)
+                if legend_label is not None:
+                    self._original_legend_labels[item] = legend_label.text
 
             if item not in self.markerItems:
                 curve_pen = item.opts.get("pen", mkPen("w"))
@@ -1689,18 +1691,13 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
     def clearCurveLabels(self) -> None:
         """
-        Remove the consolidated crosshair label, all markers, and clear tracking dicts.
+        Restore legend labels to original text, remove all markers, and clear tracking dicts.
 
         Returns
         -------
         None
         """
-        if hasattr(self, "crosshair_label") and self.crosshair_label is not None:
-            self.crosshair_label.hide()
-            primary_vb = self.getViewBox()
-            if self.crosshair_label in primary_vb.addedItems:
-                primary_vb.removeItem(self.crosshair_label)
-            self.crosshair_label = None
+        self._restoreLegendLabels()
 
         if hasattr(self, "textItems"):
             self.textItems.clear()
@@ -1718,7 +1715,19 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
 
             self.markerItems.clear()
 
+        if hasattr(self, "_original_legend_labels"):
+            self._original_legend_labels.clear()
+
         self.init_label = True
+
+    def _restoreLegendLabels(self) -> None:
+        """Restore all legend entries to their original text (curve name only)."""
+        if not hasattr(self, "_original_legend_labels") or self._legend is None:
+            return
+        for curve, original_text in self._original_legend_labels.items():
+            legend_label = self._legend.getLabel(curve)
+            if legend_label is not None:
+                legend_label.setText(original_text)
 
     @Slot(float, float)
     def updateLabel(self, scene_x: float, scene_y: float) -> None:
@@ -1750,16 +1759,10 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             self.initializeCurveLabels()
 
         primary_vb = self.getViewBox()
-        if self.crosshair_label is not None and self.crosshair_label not in primary_vb.addedItems:
-            primary_vb.addItem(self.crosshair_label)
-
-        mouse_point_primary = primary_vb.mapSceneToView(QPointF(scene_x, scene_y))
-        label_x = mouse_point_primary.x()
-        label_lines = []
-        has_any_data = False
 
         for curve in self.textItems:
             marker = self.markerItems.get(curve)
+            original_name = self._original_legend_labels.get(curve, "")
 
             if not curve.isVisible():
                 if marker is not None:
@@ -1788,6 +1791,7 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             ):
                 if marker is not None:
                     marker.hide()
+                self._setLegendLabel(curve, original_name)
                 continue
 
             idx = np.searchsorted(xData, x_val, side="right") - 1
@@ -1799,31 +1803,24 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
             if not (np.isfinite(real_x) and np.isfinite(real_y)):
                 if marker is not None:
                     marker.hide()
+                self._setLegendLabel(curve, original_name)
                 continue
 
-            has_any_data = True
             x_str = self.getFormattedX(real_x)
             y_str = self.getFormattedY(real_y)
-            label_lines.append(f"x={x_str}  y={y_str}")
+            self._setLegendLabel(curve, f"{original_name}<br>x={x_str}  y={y_str}")
 
             if marker is not None:
                 marker.setData([real_x], [real_y])
                 marker.show()
 
-        if self.crosshair_label is not None:
-            if has_any_data:
-                self.crosshair_label.setText("\n".join(label_lines))
-
-                # Pin label to top-left corner of the view (fixed legend style)
-                view_range = primary_vb.viewRange()
-                x_min = view_range[0][0]
-                y_max = view_range[1][1]
-                x_padding = (view_range[0][1] - x_min) * 0.01
-                y_padding = (y_max - view_range[1][0]) * 0.01
-                self.crosshair_label.setPos(x_min + x_padding, y_max - y_padding)
-                self.crosshair_label.show()
-            else:
-                self.crosshair_label.hide()
+    def _setLegendLabel(self, curve, text: str) -> None:
+        """Update a single legend entry's text, if the legend exists."""
+        if self._legend is None:
+            return
+        legend_label = self._legend.getLabel(curve)
+        if legend_label is not None:
+            legend_label.setText(text)
 
     def getFormattedX(self, real_x: float) -> str:
         """

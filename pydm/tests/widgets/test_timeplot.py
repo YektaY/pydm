@@ -350,6 +350,29 @@ def test_redraw_plot(mocked_set_opts, mocked_set_data, qtbot, monkeypatch):
     assert not time_plot._needs_redraw
 
 
+class DummyLegendLabel:
+    """A dummy legend label for testing."""
+
+    def __init__(self, text=""):
+        self.text = text
+
+    def setText(self, text):
+        self.text = text
+
+
+class DummyLegend:
+    """A dummy legend for testing."""
+
+    def __init__(self):
+        self._labels = {}
+
+    def addItem(self, item, name):
+        self._labels[item] = DummyLegendLabel(name)
+
+    def getLabel(self, item):
+        return self._labels.get(item)
+
+
 class BasePlotDummy:
     def updateLabel(self, x_val, y_val):
         self.parent_called = True
@@ -358,26 +381,20 @@ class BasePlotDummy:
 class TimePlotDummy(BasePlotDummy):
     def __init__(self):
         self.textItems = {}
-        self.crosshair_label = None
+        self._legend = DummyLegend()
         self.parent_called = False
 
     def updateLabel(self, x_val: float, y_val: float) -> None:
         super().updateLabel(x_val, y_val)
 
-        if self.crosshair_label is not None and self.crosshair_label.isVisible():
-            has_severity = False
-            for curve in self.textItems:
-                if getattr(curve, "severity_raw", -1) != -1:
-                    has_severity = True
-                    break
-            if has_severity:
-                old_text = self.crosshair_label.toPlainText()
-                severity_lines = []
-                for curve in self.textItems:
-                    if getattr(curve, "severity_raw", -1) != -1:
-                        severity_lines.append(str(curve.severity))
-                if severity_lines:
-                    self.crosshair_label.setText(old_text + "\n" + "\n".join(severity_lines))
+        if self._legend is None:
+            return
+        for curve in self.textItems:
+            if getattr(curve, "severity_raw", -1) != -1:
+                legend_label = self._legend.getLabel(curve)
+                if legend_label is not None:
+                    old_text = legend_label.text
+                    legend_label.setText(f"{old_text}  {curve.severity}")
 
 
 def test_updateLabel():
@@ -390,11 +407,10 @@ def test_updateLabel():
     curve_without_severity = MagicMock()
     curve_without_severity.severity_raw = -1
 
-    crosshair_label = MagicMock()
-    crosshair_label.isVisible.return_value = True
-    crosshair_label.toPlainText.return_value = "x=10:00:00  y=1.23"
+    # Add curves to legend with initial text (simulates parent updateLabel having run)
+    instance._legend.addItem(curve_with_severity, "Curve1<br>x=10:00:00  y=1.23")
+    instance._legend.addItem(curve_without_severity, "Curve2<br>x=10:00:00  y=5.00")
 
-    instance.crosshair_label = crosshair_label
     instance.textItems = {
         curve_with_severity: None,
         curve_without_severity: None,
@@ -403,4 +419,10 @@ def test_updateLabel():
     instance.updateLabel(10.0, 20.0)
 
     assert instance.parent_called, "Parent's updateLabel was not called."
-    crosshair_label.setText.assert_called_once_with("x=10:00:00  y=1.23\nHIGH")
+    # Severity should be appended to the curve with severity
+    label_with = instance._legend.getLabel(curve_with_severity).text
+    assert "HIGH" in label_with
+    assert "x=10:00:00  y=1.23" in label_with
+    # Curve without severity should be unchanged
+    label_without = instance._legend.getLabel(curve_without_severity).text
+    assert "HIGH" not in label_without
