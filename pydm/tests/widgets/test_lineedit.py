@@ -350,6 +350,44 @@ def test_write_access_changed(qapp, qtbot, signals, new_write_access, is_channel
             assert "Access denied by Channel Access Security." in actual_tooltip
 
 
+def test_explicit_read_only_false_not_overridden(qtbot):
+    """Verify that explicitly setting readOnly=False prevents write_access_changed
+    from making the widget read-only. This reproduces the Designer bug where saving
+    readOnly=False in a .ui file gets overwritten to True."""
+    widget = PyDMLineEdit()
+    qtbot.addWidget(widget)
+
+    # Simulate Designer loading readOnly=False from .ui file
+    widget.setReadOnly(False)
+    assert not widget.isReadOnly()
+
+    # Simulate PV reporting no write access — should NOT override the explicit setting
+    widget.write_access_changed(False)
+    assert not widget.isReadOnly()
+
+    # Verify that the default (None) still defers to write_access
+    widget2 = PyDMLineEdit()
+    qtbot.addWidget(widget2)
+    assert widget2._user_set_read_only is None
+    widget2.write_access_changed(False)
+    assert widget2.isReadOnly()
+    widget2.write_access_changed(True)
+    assert not widget2.isReadOnly()
+
+
+def test_explicit_read_only_true_always_honored(qtbot):
+    """Verify that explicitly setting readOnly=True keeps the widget read-only
+    even when the PV grants write access."""
+    widget = PyDMLineEdit()
+    qtbot.addWidget(widget)
+
+    widget.setReadOnly(True)
+    assert widget.isReadOnly()
+
+    widget.write_access_changed(True)
+    assert widget.isReadOnly()
+
+
 @pytest.mark.parametrize(
     "is_precision_from_pv, pv_precision, non_pv_precision",
     [
