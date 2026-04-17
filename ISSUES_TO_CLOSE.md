@@ -12,6 +12,13 @@ The following issues have been triaged and found to be already resolved, not act
 | 1265 | Qt Designer incorrectly sets penStyle | Fixed in commits `9b345b0a` and `e4655950` |
 | 1267 | PyDMShellCommand RuntimeError on PySide6 | Fixed in commit `a70719ac` — internal timer now stops on object destroy |
 
+## No Longer Relevant
+
+| # | Title | Reason |
+|---|-------|--------|
+| 611 | Installation fails with PySide2 due to qRound | `qRound` is no longer used in the codebase, and PySide2 is EOL. Only PyQt5 and PySide6 are supported. |
+| 853 | PyDM doesn't work with newest PyQt 5.15.4 | Resolved — test suite passes on PyQt5 5.15.11 with no version pin required. |
+
 ## Not Actionable / Not a Bug
 
 | # | Title | Reason |
