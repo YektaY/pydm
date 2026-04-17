@@ -507,6 +507,15 @@ class PyDMDrawingLineBase(PyDMDrawing):
         self._arrow_mid_point_selection = False
         self._arrow_mid_point_flipped = False
 
+    def draw_item(self, painter):
+        super().draw_item(painter)
+        # With antialiasing, lines are drawn centered on coordinates. When
+        # the pen width is odd this straddles pixel boundaries, causing
+        # sub-pixel blending that looks blurry. Shifting by half a pixel
+        # aligns line centers to the pixel grid.
+        if self._pen.width() % 2 == 1:
+            painter.translate(0.5, 0.5)
+
     def readArrowSize(self) -> int:
         """
         Size to render line arrows.
