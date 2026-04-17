@@ -11,6 +11,7 @@ The following issues have been triaged and found to be already resolved, not act
 | 1239 | Crosshair labels not cleared when disabled | Fixed in PR #1256 (commit `369e8b14`) |
 | 1265 | Qt Designer incorrectly sets penStyle | Fixed in commits `9b345b0a` and `e4655950` |
 | 1267 | PyDMShellCommand RuntimeError on PySide6 | Fixed in commit `a70719ac` — internal timer now stops on object destroy |
+| 1268 | Odd output at end of running tests with PySide6 | Fixed in commits `975645e0` (force `aboutToQuit` on teardown) and `3cbc01df` (properly close calc plugin worker threads) |
 
 ## No Longer Relevant
 
