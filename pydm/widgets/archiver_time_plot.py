@@ -1289,6 +1289,8 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
             self._handle_caching_off(min_x, max_x)
         elif not self.plotItem.isAnyXAutoRange():
             self._handle_manual_scrolling_or_zoom(min_x, max_x, update_immediately)
+        else:
+            self._handle_auto_scroll(update_immediately)
 
         self._prev_x = min_x
 
@@ -1338,6 +1340,13 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                     max_point - self.getTimeSpan(), max_point, padding=0.0, update=update_immediately
                 )
                 self.plotItem.blockSignals(blocked)
+
+    def _handle_auto_scroll(self, update_immediately: bool = False) -> None:
+        """Scroll the x-axis forward to follow live data when autorange and caching are both on."""
+        max_point = max(curve.max_x() for curve in self._curves)
+        blocked = self.plotItem.blockSignals(True)
+        self.plotItem.setXRange(max_point - self.getTimeSpan(), max_point, padding=0.0, update=update_immediately)
+        self.plotItem.blockSignals(blocked)
 
     def requestDataFromArchiver(self, min_x: Optional[float] = None, max_x: Optional[float] = None) -> None:
         """
