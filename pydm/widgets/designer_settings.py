@@ -264,7 +264,13 @@ class PropertyIntSpinBox(_PropertyHelper, QtWidgets.QSpinBox):
 class PropertyMacroTable(_PropertyHelper, DictionaryTable):
     def set_value_from_widget(self, widget, attr, value):
         try:
-            macros = parse_macro_string(value or "")
+            # PyDMRelatedDisplayButton stores macros as a list of JSON
+            # strings (one per display file), while PyDMEmbeddedDisplay
+            # uses a single string. Normalize to a list and merge.
+            items = value if isinstance(value, list) else [value]
+            macros = {}
+            for item in items:
+                macros.update(parse_macro_string(item or ""))
         except Exception:
             logger.exception("Failed to parse macro string: %r", value)
         else:
