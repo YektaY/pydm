@@ -284,6 +284,34 @@ def test_middle_click(qtbot, monkeypatch, widget_class, init_channel, expected_c
     assert copied_text == expected_clipboard_text
 
 
+def test_middle_click_release_consumed(qtbot, monkeypatch):
+    """Verify that middle button release is consumed by the event filter so
+    that widgets like QLineEdit do not paste from the selection clipboard."""
+    from qtpy.QtCore import QEvent
+
+    widget = PyDMLineEdit(init_channel="CA://TEST_PV")
+    qtbot.addWidget(widget)
+    qtbot.waitExposed(widget)
+
+    # Mock clipboard so we don't modify the real one
+    monkeypatch.setattr(QClipboard, "setText", lambda *a, **kw: None)
+
+    # Simulate middle press (consumed by event filter)
+    press_event = QMouseEvent(
+        QEvent.MouseButtonPress, widget.rect().center(), Qt.MiddleButton, Qt.MiddleButton, Qt.NoModifier
+    )
+    assert widget.eventFilter(widget, press_event) is True
+
+    # Simulate middle release — should also be consumed
+    release_event = QMouseEvent(
+        QEvent.MouseButtonRelease, widget.rect().center(), Qt.MiddleButton, Qt.MiddleButton, Qt.NoModifier
+    )
+    assert widget.eventFilter(widget, release_event) is True
+
+    # Verify nothing was pasted into the line edit
+    assert widget.text() == ""
+
+
 @pytest.mark.parametrize(
     "init_channel",
     [

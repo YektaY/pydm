@@ -204,9 +204,10 @@ class PyDMPrimitiveWidget(object):
         """
         # Override the eventFilter to capture all middle mouse button events,
         # and show a tooltip if needed.
-        if event.type() == QEvent.MouseButtonPress:
+        if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
             if event.button() == Qt.MiddleButton:
-                self.show_address_tooltip(event)
+                if event.type() == QEvent.MouseButtonPress:
+                    self.show_address_tooltip(event)
                 return True
         return False
 
