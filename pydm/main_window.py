@@ -55,7 +55,12 @@ class PyDMMainWindow(QMainWindow):
         self._saved_menu_height = None
         self._new_widget_size = None
 
-        self.default_font_size = QApplication.instance().font().pointSizeF()
+        app_font = QApplication.instance().font()
+        self._font_uses_pixel_size = app_font.pointSizeF() < 0
+        if self._font_uses_pixel_size:
+            self.default_font_size = float(app_font.pixelSize())
+        else:
+            self.default_font_size = app_font.pointSizeF()
 
         self.home_file = home_file
         self.home_widget = None
@@ -497,14 +502,41 @@ class PyDMMainWindow(QMainWindow):
         self.set_font_size(old_factor, self.font_factor)
 
     def set_font_size(self, old, new):
+        """Scale all application fonts by the ratio ``new / old``.
+
+        Parameters
+        ----------
+        old : float
+            Previous font scaling factor.
+        new : float
+            New font scaling factor.
+        """
         current_font = self.app.font()
-        current_font.setPointSizeF(current_font.pointSizeF() / old * new)
+        self._scale_font(current_font, old, new)
         QApplication.instance().setFont(current_font)
 
         for w in self.app.allWidgets():
             w_c_f = w.font()
-            w_c_f.setPointSizeF(w_c_f.pointSizeF() / old * new)
+            self._scale_font(w_c_f, old, new)
             w.setFont(w_c_f)
+
+    def _scale_font(self, font, old, new):
+        """Scale a QFont by the ratio ``new / old``, handling both point and
+        pixel sized fonts.
+
+        Parameters
+        ----------
+        font : QFont
+            The font to modify in place.
+        old : float
+            Previous scaling factor.
+        new : float
+            New scaling factor.
+        """
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(font.pointSizeF() / old * new)
+        elif font.pixelSize() > 0:
+            font.setPixelSize(max(1, int(font.pixelSize() / old * new)))
 
         QTimer.singleShot(0, self.resizeForNewDisplayWidget)
 
