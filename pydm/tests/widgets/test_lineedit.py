@@ -357,15 +357,12 @@ def test_explicit_read_only_false_not_overridden(qtbot):
     widget = PyDMLineEdit()
     qtbot.addWidget(widget)
 
-    # Simulate Designer loading readOnly=False from .ui file
     widget.setReadOnly(False)
     assert not widget.isReadOnly()
 
-    # Simulate PV reporting no write access — should NOT override the explicit setting
     widget.write_access_changed(False)
     assert not widget.isReadOnly()
 
-    # Verify that the default (None) still defers to write_access
     widget2 = PyDMLineEdit()
     qtbot.addWidget(widget2)
     assert widget2._user_set_read_only is None

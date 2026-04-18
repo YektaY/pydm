@@ -166,13 +166,20 @@ class PyDMLineEdit(QLineEdit, TextFormatter, PyDMWritableWidget):
         self.set_display()
 
     def setReadOnly(self, readOnly):
+        """Set the read-only state using tri-state logic.
+
+        Parameters
+        ----------
+        readOnly : bool or None
+            ``True`` forces read-only, ``False`` forces writable, and
+            ``None`` defers to the PV's write-access state.
+        """
         self._user_set_read_only = readOnly
         if readOnly:
             super().setReadOnly(True)
         elif readOnly is False:
             super().setReadOnly(False)
         else:
-            # None — defer to write_access
             super().setReadOnly(not self._write_access)
 
     def write_access_changed(self, new_write_access):
