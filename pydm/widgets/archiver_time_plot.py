@@ -1342,7 +1342,16 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
                 self.plotItem.blockSignals(blocked)
 
     def _handle_auto_scroll(self, update_immediately: bool = False) -> None:
-        """Scroll the x-axis forward to follow live data when autorange and caching are both on."""
+        """Scroll the x-axis forward to follow live data.
+
+        Called when both autorange and data caching are enabled.
+
+        Parameters
+        ----------
+        update_immediately : bool, optional
+            If ``True``, update the axis range immediately rather than
+            deferring to the next render cycle.
+        """
         max_point = max(curve.max_x() for curve in self._curves)
         blocked = self.plotItem.blockSignals(True)
         self.plotItem.setXRange(max_point - self.getTimeSpan(), max_point, padding=0.0, update=update_immediately)
