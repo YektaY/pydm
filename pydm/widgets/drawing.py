@@ -508,11 +508,18 @@ class PyDMDrawingLineBase(PyDMDrawing):
         self._arrow_mid_point_flipped = False
 
     def draw_item(self, painter):
+        """Set up the painter and apply a half-pixel offset for crisp lines.
+
+        With antialiasing enabled, odd-width lines straddle pixel boundaries
+        causing sub-pixel blending.  A half-pixel shift aligns line centers
+        to the pixel grid.
+
+        Parameters
+        ----------
+        painter : QPainter
+            The painter used to draw the line.
+        """
         super().draw_item(painter)
-        # With antialiasing, lines are drawn centered on coordinates. When
-        # the pen width is odd this straddles pixel boundaries, causing
-        # sub-pixel blending that looks blurry. Shifting by half a pixel
-        # aligns line centers to the pixel grid.
         if self._pen.width() % 2 == 1:
             painter.translate(0.5, 0.5)
 
