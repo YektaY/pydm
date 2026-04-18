@@ -1,37 +1,42 @@
 import numpy as np
 import pytest
-from unittest.mock import patch
 
-from pydm.widgets.image import ImageUpdateThread, PyDMImageView
-
-
-@pytest.fixture
-def image_view(qtbot):
-    """Create a PyDMImageView widget for testing."""
-    view = PyDMImageView()
-    qtbot.addWidget(view)
-    return view
+from pydm.widgets.image import ImageUpdateThread, DimensionOrder, ReadingOrder
 
 
-def test_rgb_image_ignores_colormap_levels(image_view):
-    """Verify that RGB images use their own data range for levels instead of
-    the colormap min/max settings intended for mono images.
-
-    Parameters
-    ----------
-    image_view : PyDMImageView
-        Fixture-provided image view widget.
+class FakeImageView:
+    """Lightweight stand-in for PyDMImageView that provides only the
+    attributes read by ``ImageUpdateThread``.  Avoids instantiating the
+    real widget which triggers segfaults when run alongside other tests.
     """
-    image_view.cm_min = 0.0
-    image_view.cm_max = 4095.0
-    image_view._normalize_data = False
-    image_view.needs_redraw = True
-    image_view._image_width = 4
+
+    def __init__(self):
+        self.image_waveform = np.zeros(0)
+        self.imageWidth = 4
+        self.readingOrder = ReadingOrder.Fortranlike
+        self.needs_redraw = True
+        self.cm_min = 0.0
+        self.cm_max = 255.0
+        self._normalize_data = False
+        self._dimension_order = DimensionOrder.HeightFirst
+
+    def process_image(self, img):
+        return img
+
+
+def test_rgb_image_ignores_colormap_levels():
+    """RGB images should derive display levels from their own data range,
+    not from the mono colormap min/max settings.
+    """
+    view = FakeImageView()
+    view.cm_min = 0.0
+    view.cm_max = 4095.0
+    view._normalize_data = False
 
     rgb_img = np.random.randint(0, 256, (4, 4, 3), dtype=np.uint8)
-    image_view.image_waveform = rgb_img
+    view.image_waveform = rgb_img
 
-    thread = ImageUpdateThread(image_view)
+    thread = ImageUpdateThread(view)
     emitted = []
     thread.updateSignal.connect(lambda data: emitted.append(data))
     thread.run()
@@ -42,24 +47,17 @@ def test_rgb_image_ignores_colormap_levels(image_view):
     assert maxi == rgb_img.max()
 
 
-def test_mono_image_uses_colormap_levels(image_view):
-    """Verify that mono images respect colormap min/max when normalize is off.
-
-    Parameters
-    ----------
-    image_view : PyDMImageView
-        Fixture-provided image view widget.
-    """
-    image_view.cm_min = 0.0
-    image_view.cm_max = 4095.0
-    image_view._normalize_data = False
-    image_view.needs_redraw = True
-    image_view._image_width = 4
+def test_mono_image_uses_colormap_levels():
+    """Mono images should respect colormap min/max when normalize is off."""
+    view = FakeImageView()
+    view.cm_min = 0.0
+    view.cm_max = 4095.0
+    view._normalize_data = False
 
     mono_img = np.random.randint(0, 4096, (4, 4), dtype=np.uint16)
-    image_view.image_waveform = mono_img
+    view.image_waveform = mono_img
 
-    thread = ImageUpdateThread(image_view)
+    thread = ImageUpdateThread(view)
     emitted = []
     thread.updateSignal.connect(lambda data: emitted.append(data))
     thread.run()
