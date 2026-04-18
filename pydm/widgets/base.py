@@ -199,11 +199,12 @@ class PyDMPrimitiveWidget(object):
         return QIcon()
 
     def eventFilter(self, obj, event):
+        """Consume middle mouse button press and release events.
+
+        On press, shows the PV address tooltip and copies the address to
+        the clipboard.  The release is also consumed to prevent widgets
+        like QLineEdit from pasting from the X11 selection clipboard.
         """
-        EventFilter to redirect "middle click" to :meth:`.show_address_tooltip`
-        """
-        # Override the eventFilter to capture all middle mouse button events,
-        # and show a tooltip if needed.
         if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
             if event.button() == Qt.MiddleButton:
                 if event.type() == QEvent.MouseButtonPress:
