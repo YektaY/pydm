@@ -11,7 +11,19 @@ class FakeWidget:
 
 
 def _make_table(qtbot, macros_value):
-    """Create a PropertyMacroTable backed by a FakeWidget."""
+    """Create a PropertyMacroTable backed by a FakeWidget.
+
+    Parameters
+    ----------
+    qtbot : fixture
+        pytest-qt fixture for widget management.
+    macros_value : str, list of str, or None
+        The macro value to initialize the table with.
+
+    Returns
+    -------
+    PropertyMacroTable
+    """
     widget = FakeWidget(macros=macros_value)
     table = PropertyMacroTable(property_widget=widget, property_name="macros")
     qtbot.addWidget(table)
