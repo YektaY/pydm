@@ -21,6 +21,17 @@ class FakeImageView:
         self._dimension_order = DimensionOrder.HeightFirst
 
     def process_image(self, img):
+        """Return the image unmodified.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            The image array.
+
+        Returns
+        -------
+        np.ndarray
+        """
         return img
 
 
