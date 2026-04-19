@@ -152,13 +152,31 @@ class PyDMMainWindow(QMainWindow):
         new_widget.setVisible(True)
         self._display_widget = new_widget
         self.setCentralWidget(self._display_widget)
+        self._apply_display_bar_visibility(new_widget)
         self.enable_disable_navigation()
         self.update_window_title()
         self.add_menu_items()
-        # Resizing to the new widget's dimensions needs to be
-        # done on the event loop for some reason - you can't
-        # just do it here.
         QTimer.singleShot(0, self.resizeForNewDisplayWidget)
+
+    def _apply_display_bar_visibility(self, display):
+        """Apply per-display bar visibility preferences.
+
+        If the display defines ``hideNavigationBar``, ``hideMenuBar``, or
+        ``hideStatusBar`` properties, the corresponding bars are toggled.
+
+        Parameters
+        ----------
+        display : QWidget
+            The display widget being loaded.
+        """
+        if getattr(display, "_hide_nav_bar", False):
+            self.toggle_nav_bar(False)
+            self.ui.actionShow_Navigation_Bar.setChecked(False)
+        if getattr(display, "_hide_menu_bar", False):
+            self.ui.actionShow_Menu_Bar.activate(QAction.Trigger)
+        if getattr(display, "_hide_status_bar", False):
+            self.toggle_status_bar(False)
+            self.ui.actionShow_Status_Bar.setChecked(False)
 
     def clear_display_widget(self):
         if self._display_widget is not None:

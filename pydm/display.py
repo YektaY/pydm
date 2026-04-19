@@ -15,6 +15,12 @@ from typing import Dict, Optional, Tuple
 import re
 import six
 from qtpy.QtWidgets import QApplication, QWidget
+from .utilities import ACTIVE_QT_WRAPPER, QtWrapperTypes
+
+if ACTIVE_QT_WRAPPER == QtWrapperTypes.PYSIDE6:
+    from PySide6.QtCore import Property
+else:
+    from PyQt5.QtCore import pyqtProperty as Property
 
 from .help_files import HelpWindow
 from .utilities import import_module_by_filename, is_pydm_app, macro, ACTIVE_QT_WRAPPER, QtWrapperTypes
@@ -341,6 +347,9 @@ class Display(QWidget):
         self._previous_display = None
         self._next_display = None
         self._local_style = ""
+        self._hide_nav_bar = False
+        self._hide_menu_bar = False
+        self._hide_status_bar = False
         if ui_filename or self.ui_filename():
             self.load_ui(macros=macros)
 
@@ -483,3 +492,63 @@ class Display(QWidget):
                 self._local_style = f.read()
         logger.debug("Setting stylesheet to: %s", self._local_style)
         super().setStyleSheet(self._local_style)
+
+    def readHideNavigationBar(self) -> bool:
+        """Whether the navigation bar should be hidden when this display is shown.
+
+        Returns
+        -------
+        bool
+        """
+        return self._hide_nav_bar
+
+    def setHideNavigationBar(self, value: bool) -> None:
+        """Set whether the navigation bar should be hidden.
+
+        Parameters
+        ----------
+        value : bool
+        """
+        self._hide_nav_bar = value
+
+    hideNavigationBar = Property(bool, readHideNavigationBar, setHideNavigationBar)
+
+    def readHideMenuBar(self) -> bool:
+        """Whether the menu bar should be hidden when this display is shown.
+
+        Returns
+        -------
+        bool
+        """
+        return self._hide_menu_bar
+
+    def setHideMenuBar(self, value: bool) -> None:
+        """Set whether the menu bar should be hidden.
+
+        Parameters
+        ----------
+        value : bool
+        """
+        self._hide_menu_bar = value
+
+    hideMenuBar = Property(bool, readHideMenuBar, setHideMenuBar)
+
+    def readHideStatusBar(self) -> bool:
+        """Whether the status bar should be hidden when this display is shown.
+
+        Returns
+        -------
+        bool
+        """
+        return self._hide_status_bar
+
+    def setHideStatusBar(self, value: bool) -> None:
+        """Set whether the status bar should be hidden.
+
+        Parameters
+        ----------
+        value : bool
+        """
+        self._hide_status_bar = value
+
+    hideStatusBar = Property(bool, readHideStatusBar, setHideStatusBar)
