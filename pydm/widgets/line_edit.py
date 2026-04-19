@@ -61,7 +61,7 @@ class PyDMLineEdit(QLineEdit, TextFormatter, PyDMWritableWidget):
         self.unitMenu = None
         self._display_format_type = self.DisplayFormat.Default
         self._string_encoding = "utf_8"
-        self._user_set_read_only = False  # Are we *really* read only?
+        self._user_set_read_only = None  # None = defer to write_access
         if utilities.is_pydm_app():
             self._string_encoding = self.app.get_string_encoding()
         # Execute setup calls that must be done here in the widget class's __init__,
@@ -166,15 +166,28 @@ class PyDMLineEdit(QLineEdit, TextFormatter, PyDMWritableWidget):
         self.set_display()
 
     def setReadOnly(self, readOnly):
+        """Set the read-only state using tri-state logic.
+
+        Parameters
+        ----------
+        readOnly : bool or None
+            ``True`` forces read-only, ``False`` forces writable, and
+            ``None`` defers to the PV's write-access state.
+        """
         self._user_set_read_only = readOnly
-        super().setReadOnly(True if self._user_set_read_only else not self._write_access)
+        if readOnly:
+            super().setReadOnly(True)
+        elif readOnly is False:
+            super().setReadOnly(False)
+        else:
+            super().setReadOnly(not self._write_access)
 
     def write_access_changed(self, new_write_access):
         """
         Change the PyDMLineEdit to read only if write access is denied
         """
         super().write_access_changed(new_write_access)
-        if not self._user_set_read_only:
+        if self._user_set_read_only is None:
             super().setReadOnly(not new_write_access)
 
     def unit_changed(self, new_unit):
