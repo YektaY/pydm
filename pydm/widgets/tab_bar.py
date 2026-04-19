@@ -1,7 +1,7 @@
 from qtpy.QtWidgets import QTabBar, QTabWidget
 from qtpy.QtGui import QIcon, QColor
 from qtpy.QtCore import QByteArray
-from .base import PyDMWidget, PostParentClassInitSetup
+from .base import PyDMPrimitiveWidget, PyDMWidget, PostParentClassInitSetup
 from .channel import PyDMChannel
 from functools import partial
 from pydm.utilities.iconfont import IconFont
@@ -186,11 +186,14 @@ class PyDMTabBar(QTabBar, PyDMWidget):
             self.set_initial_icon_for_tab(i)
 
 
-class PyDMTabWidget(QTabWidget):
+class PyDMTabWidget(QTabWidget, PyDMPrimitiveWidget):
     """PyDMTabWidget provides a tabbed container widget.  Each tab has an
     alarm channel property which can be used to show an alarm indicator on
     the tab.  The indicator is driven by the alarm severity of the specified
     channel, not the value.
+
+    The active tab can be controlled via the rules system using the
+    ``Current Tab`` rule property.
 
     Parameters
     ----------
@@ -198,10 +201,18 @@ class PyDMTabWidget(QTabWidget):
         The parent widget for the Tab Widget
     """
 
+    new_properties = {"Current Tab": ["setCurrentIndex", int]}
+
     def __init__(self, parent=None):
-        super().__init__(parent)
+        QTabWidget.__init__(self, parent)
+        PyDMPrimitiveWidget.__init__(self)
         self.tb = PyDMTabBar(parent=self)
         self.setTabBar(self.tb)
+        PostParentClassInitSetup(self)
+
+    def check_enable_state(self):
+        """No-op required by ``PostParentClassInitSetup``."""
+        pass
 
     def readCurrentTabAlarmChannel(self) -> QByteArray:
         """
