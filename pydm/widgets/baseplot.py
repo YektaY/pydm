@@ -1005,7 +1005,13 @@ class BasePlot(PlotWidget, PyDMPrimitiveWidget):
     def curveAtIndex(self, index: int) -> BasePlotCurveItem:
         return self._curves[index]
 
-    def curves(self) -> List[BasePlotCurveItem]:
+    def getCurveItems(self) -> List[BasePlotCurveItem]:
+        """Return the list of curve items on this plot.
+
+        This method is named getCurveItems to avoid being shadowed by
+        the ``curves`` Qt Property on subclasses, which serializes curve
+        data as JSON strings for .ui files.
+        """
         return self._curves
 
     def clear(self) -> None:
