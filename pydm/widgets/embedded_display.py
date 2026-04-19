@@ -49,7 +49,7 @@ class PyDMEmbeddedDisplay(QFrame, PyDMPrimitiveWidget):
         self._recursive_display_search = False
         self._macros = None
         self._embedded_widget = None
-        self._disconnect_when_hidden = True
+        self._disconnect_when_hidden = False
         self._is_connected = False
         self._only_load_when_shown = True
         self._needs_load = True
