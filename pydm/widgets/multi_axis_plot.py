@@ -623,6 +623,27 @@ class MultiAxisPlot(PlotItem):
         self.enableAutoRange()
         self.recomputeAverages()
 
+    def setLabels(self, **kwargs):
+        """Set axis labels, silently skipping any axis not present on this plot.
+
+        Overrides the base ``PlotItem.setLabels`` which raises ``KeyError``
+        when an axis name is not found.  With multi-axis plots the default
+        four axes may have been replaced by user-defined names.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Mapping of axis name to label text.  The special key ``title``
+            sets the plot title.
+        """
+        for name, label in kwargs.items():
+            if name == "title":
+                self.setTitle(label)
+            elif name in self.axes:
+                if isinstance(label, str):
+                    label = (label,)
+                self.getAxis(name).setLabel(*label)
+
     def getViewBoxForAxis(self, axisName: str) -> ViewBox:
         """
         Retrieve the ViewBox associated with a given axis name.
