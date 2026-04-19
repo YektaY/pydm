@@ -90,18 +90,36 @@ def only_if_channel_set(fcn):
     return wrapper
 
 
-def widget_destroyed(channels, widget):
+_app_shutting_down = False
+
+
+def set_app_shutting_down():
+    """Signal that the application is shutting down.
+
+    When set, ``widget_destroyed`` skips per-widget channel disconnection
+    and rules unregistration to avoid O(n*m) teardown overhead with large
+    widget counts.  The OS reclaims all resources on process exit.
     """
-    Callback invoked when the Widget is destroyed.
-    This method is used to ensure that the channels are disconnected.
+    global _app_shutting_down
+    _app_shutting_down = True
+
+
+def widget_destroyed(channels, widget):
+    """Callback invoked when the Widget is destroyed.
+
+    Disconnects channels and unregisters rules unless the application
+    is shutting down, in which case cleanup is skipped for performance.
 
     Parameters
     ----------
-    channels : list
-        A list of PyDMChannel objects that this widget uses.
+    channels : callable
+        A callable returning the list of PyDMChannel objects.
     widget : weakref
         Weakref to the widget.
     """
+    if _app_shutting_down:
+        return
+
     chs = channels()
     if chs:
         for ch in chs:

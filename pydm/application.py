@@ -17,6 +17,7 @@ from qtpy.QtWidgets import QApplication
 from .main_window import PyDMMainWindow
 
 from .utilities import which, path_info, connection, ACTIVE_QT_WRAPPER, QtWrapperTypes
+from .widgets.base import set_app_shutting_down
 from .utilities.stylesheet import apply_stylesheet
 from . import config, data_plugins
 
@@ -134,6 +135,7 @@ class PyDMApplication(QApplication):
                 self.main_window.open(ui_file, macros, command_line_args)
 
         self.had_file = ui_file is not None
+        self.aboutToQuit.connect(set_app_shutting_down)
         # Re-enable sigint (usually blocked by pyqt)
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
