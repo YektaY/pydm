@@ -91,6 +91,8 @@ class PyDMRelatedDisplayButton(QPushButton, PyDMWidget):
         # but standard icons are already colored and can not be set.
         self._pydm_icon_color = QColor(90, 90, 90)
 
+        self._bring_existing_to_front = False
+
         # Retain references to subdisplays to avoid garbage collection
         self._subdisplays = []
 
@@ -393,6 +395,30 @@ class PyDMRelatedDisplayButton(QPushButton, PyDMWidget):
 
     openInNewWindow = Property(bool, readOpenInNewWindow, setOpenInNewWindow)
 
+    def readBringExistingToFront(self) -> bool:
+        """Whether to raise an existing window instead of opening a duplicate.
+
+        When ``True`` and ``openInNewWindow`` is also ``True``, clicking the
+        button will bring an already-open instance of the display to the
+        front rather than spawning a new window.
+
+        Returns
+        -------
+        bool
+        """
+        return self._bring_existing_to_front
+
+    def setBringExistingToFront(self, value: bool) -> None:
+        """Set whether to raise an existing window instead of opening a duplicate.
+
+        Parameters
+        ----------
+        value : bool
+        """
+        self._bring_existing_to_front = value
+
+    bringExistingToFront = Property(bool, readBringExistingToFront, setBringExistingToFront)
+
     def readPasswordProtected(self) -> bool:
         """
         Whether or not this button is password protected.
@@ -645,6 +671,13 @@ class PyDMRelatedDisplayButton(QPushButton, PyDMWidget):
                 target = self.EXISTING_WINDOW
                 screen_target = None
 
+        if self._bring_existing_to_front and target == self.NEW_WINDOW:
+            existing = self._find_existing_subdisplay(fname)
+            if existing is not None:
+                existing.raise_()
+                existing.activateWindow()
+                return existing
+
         if is_pydm_app():
             if target == self.NEW_WINDOW:
                 return load_file(fname, macros=macros, target=screen_target)
@@ -652,17 +685,30 @@ class PyDMRelatedDisplayButton(QPushButton, PyDMWidget):
                 return self.window().open(fname, macros=macros)
         else:
             display = load_file(fname, macros=macros, target=ScreenTarget.DIALOG)
-            # Not a pydm app: need to give our new display proper pydm styling
-            # Usually done in PyDMApplication
             merge_widget_stylesheet(widget=display)
-            # Clean up references to closed subdisplays
             for old_display in list(self._subdisplays):
-                # isVisible only goes False after clicking "close"
                 if not old_display.isVisible():
                     self._subdisplays.remove(old_display)
-            # Retain a reference to avoid garbage collection
             self._subdisplays.append(display)
             return display
+
+    def _find_existing_subdisplay(self, filename) -> Optional[QWidget]:
+        """Return an existing visible subdisplay for the given filename.
+
+        Parameters
+        ----------
+        filename : str
+            Resolved path of the display file to search for.
+
+        Returns
+        -------
+        QWidget or None
+            The existing subdisplay if found and visible, otherwise ``None``.
+        """
+        for display in self._subdisplays:
+            if display.isVisible() and getattr(display, "_loaded_file", None) == filename:
+                return display
+        return None
 
     def context_menu(self):
         try:
