@@ -43,3 +43,4 @@ The following issues have been triaged and found to be already resolved, not act
 | 267 | Tests for Base Plot Table Model | `test_curve_editor.py` has `test_curves_table_model` and `test_axis_table_model` using `qtmodeltester`. |
 | 269 | Tests for Scatter Plot Curve Editor | `test_curve_editor.py` has `test_scatterplot_editor`; `test_scatterplot.py` has 8 additional curve tests. |
 | 271 | Tests for Time Plot Curve Editor | `test_curve_editor.py` has `test_timeplot_curve_editor`; `test_timeplot.py` has 17 additional curve and plot tests. |
+| 299 | CamViewer needs some love | No CamViewer code exists in pydm — it is an external application. |
