@@ -31,6 +31,7 @@ The following issues have been triaged and found to be already resolved, not act
 | 872 | ImportError with PyQt5.QtNetwork: krb5_ser_context_init | Environment-specific — conda krb5 library conflict on Ubuntu 20.04, not a pydm code issue. |
 
 | 347 | ImageViewer should support colored images | RGB images already work — pyqtgraph `ImageItem` handles 3D arrays natively. PR #1322 fixes the remaining scaling issue. |
+| 832 | Modify font size on PyDMTabWidget tab header | Confirmed working as of PyQt5 5.12.3 per issue comments (2025). Font size changes now apply to both tab content and header. |
 
 ## Testing Gaps — Now Covered
 
