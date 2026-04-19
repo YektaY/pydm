@@ -27,44 +27,42 @@ logger = logging.getLogger(__name__)
 
 
 def logger_destroyed(log):
-    """
-    Callback invoked when the Widget is destroyed.
-    This method is used to ensure that the log handlers are cleared.
+    """Callback invoked when the Widget is destroyed.
+
+    Closes and removes all handlers from the logger so that log messages
+    no longer reach a destroyed widget.
 
     Parameters
     ----------
-    log : Logger
+    log : logging.Logger
         The logger object being used by the PyDMLogDisplay widget.
     """
     if log:
-        for handler in log.handlers:
+        for handler in list(log.handlers):
+            handler.close()
             log.removeHandler(handler)
 
 
 class GuiHandler(QObject, logging.Handler):
-    """
-    Handler for PyDM Applications
+    """Handler for PyDM Applications.
 
-    A composite of a QObject and a logging handler. This can be added to a
+    A composite of a QObject and a logging handler.  This can be added to a
     ``logging.Logger`` object just like any standard ``logging.Handler`` and
-    will emit logging messages as Signals
+    will emit logging messages as Qt Signals.
 
     .. code:: python
 
-        # Create a log and GuiHandler
         logger = logging.getLogger()
         ui_handler = GuiHandler(level=logging.INFO)
-        # Attach our handler to the log
         logger.addHandler(ui_handler)
-        # Publish log message via Signal
         ui_handler.message.connect(mySlot)
 
     Parameters
     ----------
-    level: int
-        Level of Handler
-
-    parent: QObject, optional
+    level : int
+        Level of Handler.
+    parent : QObject, optional
+        Parent QObject.
     """
 
     message = Signal(str)
@@ -72,16 +70,47 @@ class GuiHandler(QObject, logging.Handler):
     def __init__(self, level=logging.NOTSET, parent=None):
         logging.Handler.__init__(self, level=level)
         QObject.__init__(self, parent)
+        self._log = None
+
+    def attach_to_logger(self, log):
+        """Attach this handler to a logger, tracking the reference for cleanup.
+
+        Parameters
+        ----------
+        log : logging.Logger
+            The logger to attach to.
+        """
+        if self._log is not None:
+            self._log.removeHandler(self)
+        self._log = log
+        self._log.addHandler(self)
+
+    def close(self):
+        """Remove this handler from its logger before closing.
+
+        Prevents log messages from reaching a destroyed handler during
+        the window between C++ object deletion and the Qt ``destroyed``
+        signal.
+        """
+        if self._log is not None:
+            self._log.removeHandler(self)
+            self._log = None
+        super().close()
 
     def emit(self, record):
-        """Emit formatted log messages when received but only if level is set."""
-        # Avoid garbage to be presented when master log is running with DEBUG.
+        """Emit formatted log messages when received.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            The log record to format and emit.
+        """
         if self.level == logging.NOTSET:
             return
         try:
             self.message.emit(self.format(record))
-        except RuntimeError:
-            logger.debug("Handler was destroyed at the C++ level.")
+        except (RuntimeError, AttributeError):
+            self.close()
 
 
 class LogLevels(object):
@@ -229,17 +258,17 @@ class PyDMLogDisplay(QWidget):
         return self.log.name
 
     def setLogName(self, name) -> None:
-        # Disconnect prior log from handler
-        if self.log:
-            self.log.removeHandler(self.handler)
-        # Reattach handler to new handler
+        """Set the logger by name, attaching the handler to it.
+
+        Parameters
+        ----------
+        name : str
+            Name of the Python logger to display.
+        """
         self.log = logging.getLogger(name)
-        # Ensure that the log matches level of handler
-        # only if the handler level is less than the log.
         if self.log.level < self.handler.level:
             self.log.setLevel(self.handler.level)
-        # Attach preconfigured handler
-        self.log.addHandler(self.handler)
+        self.handler.attach_to_logger(self.log)
 
     logName = Property(str, readLogName, setLogName)
 
