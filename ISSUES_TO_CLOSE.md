@@ -30,6 +30,8 @@ The following issues have been triaged and found to be already resolved, not act
 | 1320 | asyn_record.ui won't launch from home directories | Not a bug — the file is not in the default search path. Use the `-r` flag for recursive search or set the `PYDM_DISPLAYS_PATH` environment variable to include the directory containing the file. |
 | 872 | ImportError with PyQt5.QtNetwork: krb5_ser_context_init | Environment-specific — conda krb5 library conflict on Ubuntu 20.04, not a pydm code issue. |
 
+| 347 | ImageViewer should support colored images | RGB images already work — pyqtgraph `ImageItem` handles 3D arrays natively. PR #1322 fixes the remaining scaling issue. |
+
 ## Testing Gaps — Now Covered
 
 | # | Title | Reason |
