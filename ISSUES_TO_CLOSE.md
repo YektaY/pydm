@@ -19,6 +19,7 @@ The following issues have been triaged and found to be already resolved, not act
 |---|-------|--------|
 | 611 | Installation fails with PySide2 due to qRound | `qRound` is no longer used in the codebase, and PySide2 is EOL. Only PyQt5 and PySide6 are supported. |
 | 853 | PyDM doesn't work with newest PyQt 5.15.4 | Resolved — test suite passes on PyQt5 5.15.11 with no version pin required. |
+| 866 | pydm application cannot find new widget | Same root cause as #853 — fixed by PyQt5 5.15.4+ per issue comments. |
 
 ## Not Actionable / Not a Bug
 
@@ -27,3 +28,4 @@ The following issues have been triaged and found to be already resolved, not act
 | 1083 | Macros don't propagate via PyDMEDMDisplayButton | `PyDMEDMDisplayButton` is from an external EDM converter package, not part of pydm. The built-in `PyDMRelatedDisplayButton` already propagates parent macros correctly via `find_parent_display().macros()`. |
 | 1305 | EDM screens don't launch on first click | Cannot reproduce per maintainer comment. Appears to be an external EDM server race condition, not a pydm issue. |
 | 1320 | asyn_record.ui won't launch from home directories | Not a bug — the file is not in the default search path. Use the `-r` flag for recursive search or set the `PYDM_DISPLAYS_PATH` environment variable to include the directory containing the file. |
+| 872 | ImportError with PyQt5.QtNetwork: krb5_ser_context_init | Environment-specific — conda krb5 library conflict on Ubuntu 20.04, not a pydm code issue. |
