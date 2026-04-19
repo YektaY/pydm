@@ -749,6 +749,33 @@ class PyDMShellCommand(QPushButton, PyDMWidget):
             return False
         return True
 
+    @staticmethod
+    def _safe_stream(stream):
+        """Return ``None`` if *stream* has a usable file descriptor, else ``DEVNULL``.
+
+        When a terminal is closed while the pydm process is still running,
+        the inherited file descriptors become invalid.  Passing them to
+        ``Popen`` would cause the child process to crash with ``OSError``.
+
+        Parameters
+        ----------
+        stream : file-like or None
+            Typically ``sys.stdout`` or ``sys.stderr``.
+
+        Returns
+        -------
+        None or int
+            ``None`` lets the child inherit the stream; ``subprocess.DEVNULL``
+            discards the output safely.
+        """
+        if stream is None:
+            return subprocess.DEVNULL
+        try:
+            stream.fileno()
+            return None
+        except (OSError, AttributeError):
+            return subprocess.DEVNULL
+
     def execute_command(self, command: str, action=None) -> None:
         """
         Execute the shell command given by ```command```.
@@ -788,7 +815,7 @@ class PyDMShellCommand(QPushButton, PyDMWidget):
                 if self._stdout == TermOutputMode.HIDE:
                     stdout = subprocess.DEVNULL
                 elif self._stdout == TermOutputMode.SHOW:
-                    stdout = None
+                    stdout = self._safe_stream(sys.stdout)
                 elif self._stdout == TermOutputMode.STORE:
                     stdout = subprocess.PIPE
                 else:
@@ -797,7 +824,7 @@ class PyDMShellCommand(QPushButton, PyDMWidget):
                 if self._stderr == TermOutputMode.HIDE:
                     stderr = subprocess.DEVNULL
                 elif self._stderr == TermOutputMode.SHOW:
-                    stderr = None
+                    stderr = self._safe_stream(sys.stderr)
                 elif self._stderr == TermOutputMode.STORE:
                     stderr = subprocess.PIPE
                 else:
