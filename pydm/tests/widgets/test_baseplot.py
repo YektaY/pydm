@@ -101,6 +101,24 @@ def test_baseplot_add_curve(qtbot):
     qtbot.addWidget(base_plot)
 
 
+def test_getCurveItems_not_shadowed(qtbot):
+    """Verify getCurveItems returns actual curve objects, not the JSON
+    strings produced by the Qt Property ``curves`` on subclasses."""
+    waveform_plot = PyDMWaveformPlot()
+    qtbot.addWidget(waveform_plot)
+
+    curve = WaveformCurveItem()
+    waveform_plot.addCurve(curve)
+
+    items = waveform_plot.getCurveItems()
+    assert len(items) == 1
+    assert items[0] is curve
+
+    json_curves = waveform_plot.curves
+    assert len(json_curves) == 1
+    assert isinstance(json_curves[0], str)
+
+
 def test_baseplot_multiple_y_axes(qtbot):
     """Test that when we add curves while specifying new y-axis names for them, those axes are created and
     added to the plot correctly. Also confirm that adding a curve to an existing axis works properly."""
