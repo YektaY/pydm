@@ -1231,6 +1231,8 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
         self._show_all = show_all  # Show all plotted data after archiver fetch
         self._show_extension_lines = show_extension_lines
 
+        self.plotItem.sigXRangeChangedManually.connect(self.updateXAxis)
+
         self._starting_timestamp = time.time()  # The timestamp at which the plot was first rendered
         self._min_x = self._starting_timestamp - DEFAULT_TIME_SPAN
         self._prev_x = self._min_x  # Holds the minimum x-value of the previous update of the plot
@@ -1254,16 +1256,13 @@ class PyDMArchiverTimePlot(PyDMTimePlot):
             return
         if enable:
             try:
-                # Catch the warnings when sigXRangeChanged and sigXRangeChangedManually were not connected yet.
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=RuntimeWarning)
                     self.plotItem.sigXRangeChanged.disconnect(self.updateXAxis)
-                    self.plotItem.sigXRangeChangedManually.disconnect(self.updateXAxis)
             except TypeError:
                 pass
         else:
             self.plotItem.sigXRangeChanged.connect(self.updateXAxis)
-            self.plotItem.sigXRangeChangedManually.connect(self.updateXAxis)
         self._cache_data = enable
 
     @property
