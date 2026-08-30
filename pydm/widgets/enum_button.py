@@ -406,16 +406,25 @@ class PyDMEnumButton(QWidget, PyDMWritableWidget):
 
     @Slot(QAbstractButton)
     def handle_button_clicked(self, button):
-        """
-        Handles the event of a button being clicked.
+        """Handle a button click by sending the value and resetting visual state.
+
+        The visual state is immediately restored to the current PV value so
+        that rejected writes (e.g. PV disabled or in closed-loop mode) do not
+        leave the widget showing an incorrect selection.  If the write is
+        accepted, ``value_changed`` will update the visual state to the new
+        value.
 
         Parameters
         ----------
-        id : QAbstractButton
-            The clicked button button.
+        button : QAbstractButton
+            The clicked button.
         """
-        button_id = self._btn_group.id(button)  # get id of the button in the group
+        button_id = self._btn_group.id(button)
         self.send_value_signal.emit(button_id)
+        if self.value is not None and self.value != button_id:
+            current_btn = self._btn_group.button(self.value)
+            if current_btn:
+                current_btn.setChecked(True)
 
     def clear(self):
         """

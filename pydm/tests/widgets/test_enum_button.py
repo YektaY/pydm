@@ -258,7 +258,10 @@ def test_send_receive_value(qtbot, signals):
     signals.new_value_signal[int].emit(1)
     assert widget.value == 1
     assert widget._widgets[1].isChecked()
+
     widget._widgets[2].click()
+    assert signals.value == 2
+
+    signals.new_value_signal[int].emit(2)
     assert not widget._widgets[1].isChecked()
     assert widget._widgets[2].isChecked()
-    assert signals.value == 2
