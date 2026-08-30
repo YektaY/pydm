@@ -263,8 +263,26 @@ class PropertyIntSpinBox(_PropertyHelper, QtWidgets.QSpinBox):
 
 class PropertyMacroTable(_PropertyHelper, DictionaryTable):
     def set_value_from_widget(self, widget, attr, value):
+        """Parse macro value from the widget property into the table dictionary.
+
+        Handles both single JSON strings (``PyDMEmbeddedDisplay``) and lists
+        of JSON strings (``PyDMRelatedDisplayButton``, one per display file)
+        by normalizing to a list and merging all entries.
+
+        Parameters
+        ----------
+        widget : QWidget
+            The widget whose property is being read.
+        attr : str
+            The property name.
+        value : str or list of str
+            Macro value(s) from the widget property.
+        """
         try:
-            macros = parse_macro_string(value or "")
+            items = value if isinstance(value, list) else [value]
+            macros = {}
+            for item in items:
+                macros.update(parse_macro_string(item or ""))
         except Exception:
             logger.exception("Failed to parse macro string: %r", value)
         else:
