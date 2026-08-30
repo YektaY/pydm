@@ -507,6 +507,27 @@ class PyDMDrawingLineBase(PyDMDrawing):
         self._arrow_mid_point_selection = False
         self._arrow_mid_point_flipped = False
 
+    def _to_drawing_coords(self, pt, x, y):
+        """Convert a point from absolute coordinates to the drawing's local frame.
+
+        Parameters
+        ----------
+        pt : tuple or str
+            Point as ``(u, v)`` or a legacy comma-separated string.
+        x : float
+            Horizontal offset from ``get_bounds``.
+        y : float
+            Vertical offset from ``get_bounds``.
+
+        Returns
+        -------
+        QPointF
+        """
+        if isinstance(pt, str):
+            pt = tuple(map(int, pt.split(",")))
+        u, v = pt
+        return QPointF(u + x, v + y)
+
     def readArrowSize(self) -> int:
         """
         Size to render line arrows.
@@ -754,31 +775,23 @@ class PyDMDrawingPolyline(PyDMDrawingLineBase):
         self._points = []
 
     def draw_item(self, painter) -> None:
-        """
-        Draws the segmented line after setting up the canvas with a call to
-        ``PyDMDrawing.draw_item``.
+        """Draw segmented line after setting up the canvas.
+
+        Parameters
+        ----------
+        painter : QPainter
+            The painter used to draw the polyline.
         """
         super().draw_item(painter)
-        x, y, w, h = self.get_bounds()
-
-        def p2d(pt):
-            "convert point to drawing coordinates"
-            # drawing coordinates are centered: (0,0) is in center
-            # our points are absolute: (0,0) is upper-left corner
-            if isinstance(pt, str):
-                # 2022-05-11: needed for backwards compatibility support
-                # PyDM releases up to v1.15.1
-                # adl2pydm tags up to 0.0.2
-                pt = tuple(map(int, pt.split(",")))
-            u, v = pt
-            return QPointF(u + x, v + y)
+        x, y, _w, _h = self.get_bounds()
 
         if len(self._points) > 1:
             for i, p1 in enumerate(self._points[:-1]):
-                painter.drawLine(p2d(p1), p2d(self._points[i + 1]))
+                pt1 = self._to_drawing_coords(p1, x, y)
+                pt2 = self._to_drawing_coords(self._points[i + 1], x, y)
+                painter.drawLine(pt1, pt2)
                 if self._arrow_mid_point_selection:
-                    point1 = p2d(p1)
-                    point2 = p2d(self._points[i + 1])
+                    point1, point2 = pt1, pt2
                     if self._arrow_mid_point_flipped:
                         point1, point2 = point2, point1  # swap values
 
@@ -791,17 +804,19 @@ class PyDMDrawingPolyline(PyDMDrawingLineBase):
                     )  # 6 = arbitrary arrow size
                     painter.drawPolygon(points)
 
-        # Draw the arrows
-        # While we enforce >=2 points when user adds points, we need to check '(len(self._points) > 0)' here so we
-        # don't break trying to add arrows to new polyline with no points yet.
-        if self._arrow_end_point_selection and (len(self._points) > 0) and (len(self._points[1]) >= 2):
-            points = self._arrow_points(p2d(self._points[1]), p2d(self._points[0]), self._arrow_size, self._arrow_size)
+        if self._arrow_end_point_selection and len(self._points) > 0 and len(self._points[1]) >= 2:
+            points = self._arrow_points(
+                self._to_drawing_coords(self._points[1], x, y),
+                self._to_drawing_coords(self._points[0], x, y),
+                self._arrow_size,
+                self._arrow_size,
+            )
             painter.drawPolygon(points)
 
-        if self._arrow_start_point_selection and (len(self._points) > 0) and (len(self._points[1]) >= 2):
+        if self._arrow_start_point_selection and len(self._points) > 0 and len(self._points[1]) >= 2:
             points = self._arrow_points(
-                p2d(self._points[len(self._points) - 2]),
-                p2d(self._points[len(self._points) - 1]),
+                self._to_drawing_coords(self._points[-2], x, y),
+                self._to_drawing_coords(self._points[-1], x, y),
                 self._arrow_size,
                 self._arrow_size,
             )
@@ -1460,6 +1475,26 @@ class PyDMDrawingIrregularPolygon(PyDMDrawingPolyline):
     init_channel : str, optional
         The channel to be used by the widget.
     """
+
+    def draw_item(self, painter) -> None:
+        """Draw a filled polygon using ``drawPolygon`` instead of individual lines.
+
+        Overrides the polyline ``draw_item`` so that the painter's brush is
+        used to fill the interior of the polygon.
+
+        Parameters
+        ----------
+        painter : QPainter
+            The painter used to draw the polygon.
+        """
+        PyDMDrawingLineBase.draw_item(self, painter)
+        if len(self._points) < 3:
+            return
+        x, y, _w, _h = self.get_bounds()
+        polygon = QPolygonF()
+        for pt in self._points:
+            polygon.append(self._to_drawing_coords(pt, x, y))
+        painter.drawPolygon(polygon)
 
     def getPoints(self):
         return super().getPoints()
