@@ -461,26 +461,24 @@ class PyDMPushButton(QPushButton, PyDMWritableWidget):
 
     @Slot()
     def sendValue(self):
-        """
-        Send a new value to the channel.
+        """Send a new value to the channel.
 
-        This function interprets the settings of the PyDMPushButton and sends
-        the appropriate value out through the :attr:`.send_value_signal`.
+        When the button is checkable (toggle mode), ``pressValue`` is sent
+        when checked and ``releaseValue`` when unchecked.  Otherwise the
+        button always sends ``pressValue`` on click.
 
         Returns
         -------
-        None if any of the following condition is False:
-            1. There's no new value (pressValue) for the widget
-            2. There's no initial or current value for the widget
-            3. The confirmation dialog returns No as the user's answer to the dialog
-            4. The password validation dialog returns a validation error
-        Otherwise, return the value sent to the channel:
-            1. The value sent to the channel is the same as the pressValue if the existing
-               channel type is a str, or the relative flag is False
-            2. The value sent to the channel is the sum of the existing value and the pressValue
-               if the relative flag is True, and the channel type is not a str
+        None or value
+            The value sent, or ``None`` if the send was skipped.
         """
         self._released = False
+
+        if self.isCheckable():
+            if self.isChecked():
+                return self.__execute_send(self._pressValue)
+            return self.__execute_send(self._releaseValue)
+
         val = self.__execute_send(self._pressValue)
 
         if self._show_confirm_dialog or self._password_protected:
